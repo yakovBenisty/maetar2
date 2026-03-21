@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:3000/api/dashboard/stats)",
+      "Bash(node -e \":*)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(curl -s \"http://localhost:3000/api/dashboard/stats\" -H \"Accept: application/json\")",
+      "Bash(netstat -ano)",
+      "Bash(curl -s http://localhost:3001/api/dashboard/stats)",
+      "Bash(curl -s http://localhost:3002/api/dashboard/stats)",
+      "Bash(cmd /c \"taskkill /F /IM node.exe /T\")",
+      "Bash(cmd /c \"taskkill /PID 11980 /F && taskkill /PID 3700 /F && taskkill /PID 8744 /F\")"
+    ]
+  }
+}

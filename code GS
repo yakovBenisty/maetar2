@@ -1,0 +1,615 @@
+// ================================================
+// פיצול מיתר - גרסה מחדש
+// ================================================
+
+var sp = SpreadsheetApp.getActiveSpreadsheet();
+
+// ================================================
+// נקודות כניסה
+// ================================================
+
+function run_main() {
+  _runMain();
+}
+
+// ================================================
+// פונקציה ראשית
+// ================================================
+
+function _runMain() {
+
+  var logs = [];
+  var dateToSplit = sp.getRangeByName('dateToSp').getValue();
+
+  logs.push(_log('מידע', 'הרצה החלה | תאריך פיצול: ' + _fmtDate(dateToSplit)));
+
+  // --- טעינת כל הנתונים ---
+  var noseme    = _loadNoseme();
+  var mosadMap  = _loadMosadMap();
+  var invoices  = _loadSheet('חשבוניות');
+  var mocarim   = _loadSheet('מוכרים');
+  var sharatim  = _loadSheet('שרתים מזכירים');
+  var yadanim   = _loadSheet('ידניים');
+
+  // --- בדיקת חודש חישוב אחיד ---
+  var calcMonthError = _validateCalcMonth([invoices, mocarim, sharatim, yadanim]);
+  if (calcMonthError) {
+    logs.push(_log('שגיאה', calcMonthError));
+    _writeLogs(logs);
+    SpreadsheetApp.getUi().alert('שגיאה: ' + calcMonthError);
+    return;
+  }
+
+  // --- ניקוי פלט ---
+  _clearOutputSheets();
+
+  // --- עיבוד ---
+  var result = _processAll(invoices, mocarim, sharatim, yadanim,
+                            noseme, mosadMap, dateToSplit, logs);
+
+  // --- כתיבת פלט ---
+  _writeOutput(result, logs);
+  _writeLogs(logs);
+
+  Logger.log('סיום | תקופה א: ' + result.periodA.length +
+             ' | תקופה ב: ' + result.periodB.length +
+             ' | לא נקלטו: ' + result.rejected.length);
+}
+
+// ================================================
+// טעינת גיליון לאובייקט { headers, rows }
+// ================================================
+
+function _loadSheet(sheetName) {
+  var ws = sp.getSheetByName(sheetName);
+  var lastCol = ws.getLastColumn();
+  var lastRow = ws.getLastRow();
+
+  var headers = ws.getSheetValues(1, 1, 1, lastCol)[0];
+  var raw     = lastRow > 1
+    ? ws.getSheetValues(2, 1, lastRow - 1, lastCol)
+    : [];
+
+  // הופך כל שורה לאובייקט לפי שם עמודה
+  var rows = raw.map(function(r, i) {
+    var obj = { _rowNum: i + 2, _raw: r };
+    headers.forEach(function(h, j) {
+      if (h) obj[h] = r[j];
+    });
+    return obj;
+  }).filter(function(r) {
+    // סינון שורות ריקות לחלוטין
+    return r._raw.some(function(c) { return c !== null && c !== ''; });
+  });
+
+  return { name: sheetName, headers: headers, rows: rows };
+}
+
+// ================================================
+// טעינת גיליון נושאים למפה: קוד → נתוני נושא
+// ================================================
+
+function _loadNoseme() {
+  var ws = sp.getSheetByName('נושאים');
+  var rows = ws.getSheetValues(2, 1, ws.getLastRow() - 1, 6);
+  var map = {};
+  rows.forEach(function(r) {
+    var code = r[0];
+    if (!code) return;
+    map[code] = {
+      code:         code,
+      name:         r[1],
+      direction:    String(r[2]).trim(), // 'זכות' או 'חובה'
+      lookupType:   r[3],               // 'שונות' או 'מוסדות'
+      seif:         r[4],               // סעיף ישיר (רק בשונות)
+      mosadColName: r[5]                // שם עמודה בגיליון מוסדות (רק במוסדות)
+    };
+  });
+  return map;
+}
+
+// ================================================
+// טעינת גיליון מוסדות למפה: סמל → { עמודה → סעיף }
+// ================================================
+
+function _loadMosadMap() {
+  var ws = sp.getSheetByName('מוסדות');
+  var headers = ws.getSheetValues(1, 1, 1, ws.getLastColumn())[0];
+  var rows    = ws.getSheetValues(2, 1, ws.getLastRow() - 1, headers.length);
+  var map = {};
+  rows.forEach(function(r) {
+    var symbol = r[0];
+    if (!symbol) return;
+    var entry = {};
+    headers.forEach(function(h, i) {
+      if (h) entry[h] = r[i];
+    });
+    map[symbol] = entry;
+  });
+  return map;
+}
+
+// ================================================
+// בדיקת חודש חישוב אחיד בכל הגיליונות
+// ================================================
+
+function _validateCalcMonth(sheets) {
+  var months = {};
+
+  sheets.forEach(function(sheet) {
+    sheet.rows.forEach(function(r) {
+      var calcMonth = r['חודש חישוב'];
+      if (!calcMonth) return;
+      var key = _monthKey(calcMonth);
+      if (!months[key]) months[key] = [];
+      months[key].push(sheet.name);
+    });
+  });
+
+  var keys = Object.keys(months);
+  if (keys.length > 1) {
+    return 'נמצאו חודשי חישוב שונים בגיליונות: ' +
+      keys.map(function(k) { return k + ' (' + months[k][0] + ')'; }).join(', ');
+  }
+  return null;
+}
+
+// ================================================
+// עיבוד ראשי
+// ================================================
+
+function _processAll(invoices, mocarim, sharatim, yadanim,
+                     noseme, mosadMap, dateToSplit, logs) {
+
+  var periodA  = [];
+  var periodB  = [];
+  var rejected = [];
+  var hashvha  = {};  // השוואה: קוד נושא → { שם, חשבוניות, פירוט }
+
+  // --- עיבוד כל שורת חשבונית ---
+  invoices.rows.forEach(function(inv) {
+    var noseCode = inv['קוד נושא'];
+    var hefresh  = inv['יתרת ביצוע החודש'] || 0;
+    var tchula   = inv['חודש תחולה'];
+    var mosadId  = inv['סמל מוטב'];  // בחשבוניות זה "סמל מוטב"
+
+    if (!noseCode || hefresh === 0) return;
+
+    // --- עדכון טבלת השוואה ---
+    if (!hashvha[noseCode]) {
+      hashvha[noseCode] = { name: inv['תאור נושא'], invoice: 0, detail: 0 };
+    }
+    hashvha[noseCode].invoice += hefresh;
+
+    // --- חיפוש נושא ---
+    var nose = noseme[noseCode];
+    if (!nose) {
+      logs.push(_log('שגיאה', 'נושא לא קיים בגיליון נושאים | קוד: ' + noseCode +
+        ' | שם: ' + inv['תאור נושא']));
+      rejected.push(_rejectedEntry('', '', inv, noseCode, mosadId, hefresh));
+      return;
+    }
+
+    // --- קביעת כיוון וסכום ---
+    var isDebit = (nose.direction === 'חובה');
+    var amount  = isDebit ? hefresh * -1 : hefresh;
+
+    // ===== טיפול לפי סוג איתור =====
+
+    if (nose.lookupType === 'שונות') {
+      _processShonotRow(inv, nose, amount, tchula, dateToSplit, isDebit, periodA, periodB, logs);
+
+    } else if (nose.lookupType === 'מוסדות') {
+      _processMosadNose(inv, nose, noseCode, tchula, hefresh,
+                        mocarim, sharatim, yadanim, mosadMap,
+                        dateToSplit, isDebit,
+                        periodA, periodB, rejected, hashvha, logs);
+    } else {
+      logs.push(_log('שגיאה', 'סוג איתור לא מוכר: ' + nose.lookupType + ' | נושא ' + noseCode));
+    }
+  });
+
+  // בניית מערך השוואה לכתיבה
+  var hashvhaArr = Object.keys(hashvha).map(function(k) {
+    var h = hashvha[k];
+    return [k, h.name, h.invoice, h.detail];
+  }).filter(function(r) { return r[2] !== 0 || r[3] !== 0; });
+
+  return { periodA: periodA, periodB: periodB, rejected: rejected, hashvha: hashvhaArr };
+}
+
+// ================================================
+// שונות: שורת פקודה אחת לנושא+מוטב+תקופה
+// ================================================
+
+function _processShonotRow(inv, nose, amount, tchula, dateToSplit, isDebit, periodA, periodB, logs) {
+
+  var seif = nose.seif;
+  if (!seif) {
+    logs.push(_log('שגיאה', 'נושא שונות ללא סעיף | קוד: ' + nose.code + ' | ' + nose.name));
+    return;
+  }
+
+  var lastDay = _lastDayOfMonth(tchula);
+  var desc    = _buildDesc(nose.name, nose.code, inv['שם מוטב'], tchula);
+
+  var entry = isDebit
+    ? [seif,  '', lastDay, desc, nose.code, inv['סמל מוטב'], amount, '']
+    : ['', seif, lastDay, desc, nose.code, inv['סמל מוטב'], '',    amount];
+
+  if (tchula < dateToSplit) { periodA.push(entry); }
+  else                      { periodB.push(entry); }
+}
+
+// ================================================
+// מוסדות: חיפוש בסדר עדיפות - מוכרים → שרתים → ידניים להשלמה
+// ================================================
+
+function _processMosadNose(inv, nose, noseCode, tchula, invHefresh,
+                            mocarim, sharatim, yadanim, mosadMap,
+                            dateToSplit, isDebit,
+                            periodA, periodB, rejected, hashvha, logs) {
+
+  var tolerance  = 1;
+  var tchulaKey  = _monthKey(tchula); // חודש תחולה של שורת החשבונית הנוכחית
+
+  // --- שלב 1: חפש במוכרים לפי נושא + חודש תחולה ---
+  var mocarimRows = _getRowsForNoseAndMonth(noseCode, tchulaKey, mocarim);
+  var sourceRows  = null;
+  var sourceName  = null;
+
+  if (mocarimRows.length > 0) {
+    sourceRows = mocarimRows;
+    sourceName = 'מוכרים';
+  } else {
+    // --- שלב 2: לא נמצא במוכרים - חפש בשרתים ---
+    var sharatimRows = _getRowsForNoseAndMonth(noseCode, tchulaKey, sharatim);
+    if (sharatimRows.length > 0) {
+      sourceRows = sharatimRows;
+      sourceName = 'שרתים מזכירים';
+    }
+  }
+
+  // לא נמצא בשום גיליון פירוט
+  if (!sourceRows) {
+    logs.push(_log('שגיאה',
+      'נושא ' + nose.name + ' (' + noseCode + ')' +
+      ' חודש ' + tchulaKey + ' לא נמצא במוכרים ולא בשרתים'));
+    rejected.push(_rejectedEntry('', '', inv, noseCode, inv['סמל מוטב'], invHefresh));
+    return;
+  }
+
+  // --- חישוב סכום מהמקור לאותו חודש תחולה ---
+  var sourceSum = sourceRows.reduce(function(s, r) { return s + r.hefresh; }, 0);
+
+  // עדכון השוואה
+  if (hashvha[noseCode]) {
+    hashvha[noseCode].detail += sourceSum;
+  }
+
+  // --- בדיקת התאמה לפי חודש תחולה ---
+  if (Math.abs(invHefresh - sourceSum) <= tolerance) {
+    // התאמה מלאה - בנה פקודות מהמקור בלבד
+    _buildAndWriteEntries(sourceRows, nose, noseCode, mosadMap,
+                          dateToSplit, isDebit, periodA, periodB, rejected, logs);
+    return;
+  }
+
+  // --- הפרש קיים - בדוק בידניים לאותו חודש תחולה ---
+  var yadanimRows = _getRowsForNoseAndMonth(noseCode, tchulaKey, yadanim);
+  var yadanimSum  = yadanimRows.reduce(function(s, r) { return s + r.hefresh; }, 0);
+  var totalWithYadanim = sourceSum + yadanimSum;
+
+  if (Math.abs(invHefresh - totalWithYadanim) <= tolerance) {
+    // ידניים סגרו את ההפרש
+    logs.push(_log('מידע',
+      'נושא ' + nose.name + ' (' + noseCode + ')' +
+      ' חודש ' + tchulaKey +
+      ' | התאמה עם ידניים | ' + sourceName + ': ' + _fmt(sourceSum) +
+      ' | ידניים: ' + _fmt(yadanimSum)));
+
+    var allRows = sourceRows.concat(yadanimRows);
+    _buildAndWriteEntries(allRows, nose, noseCode, mosadMap,
+                          dateToSplit, isDebit, periodA, periodB, rejected, logs);
+
+    // עדכון השוואה עם ידניים
+    if (hashvha[noseCode]) {
+      hashvha[noseCode].detail += yadanimSum;
+    }
+
+  } else {
+    // ידניים לא סגרו - תקלה
+    logs.push(_log('אזהרה',
+      'חוסר התאמה לנושא ' + nose.name + ' (' + noseCode + ')' +
+      ' חודש ' + tchulaKey +
+      ' | חשבונית: ' + _fmt(invHefresh) +
+      ' | ' + sourceName + ': ' + _fmt(sourceSum) +
+      ' | ידניים: ' + _fmt(yadanimSum) +
+      ' | הפרש שנותר: ' + _fmt(invHefresh - totalWithYadanim)));
+    logs.push(_log('שגיאה',
+      '>>> לא נוצרה פקודה לנושא ' + nose.name +
+      ' חודש ' + tchulaKey + ' - יש לבדוק <<<'));
+
+    // כותב לדחויים את מה שיש
+    var allRows = sourceRows.concat(yadanimRows);
+    allRows.forEach(function(dr) {
+      var seif = _getSeifFromMosad(nose, dr.mosadId, mosadMap, isDebit,
+                                    logs, dr.sheet, noseCode, dr.rowNum);
+      rejected.push(_detailRejectedEntry(seif, nose, dr, isDebit));
+    });
+  }
+}
+
+// ================================================
+// שליפת שורות לנושא מגיליון אחד
+// ================================================
+
+// סינון לפי נושא + חודש תחולה (שימוש עיקרי - השוואה לחשבונית)
+function _getRowsForNoseAndMonth(noseCode, tchulaKey, sheet) {
+  var result = [];
+  var amountCol = (sheet.name === 'ידניים') ? 'סכום מחושב' : 'הפרש מחושב';
+
+  sheet.rows.forEach(function(r) {
+    if (r['קוד נושא'] !== noseCode) return;
+    if (_monthKey(r['חודש תחולה']) !== tchulaKey) return;
+    var hefresh = r[amountCol] || 0;
+    if (hefresh === 0) return;
+    result.push({
+      sheet:     sheet.name,
+      rowNum:    r._rowNum,
+      mosadId:   r['סמל מוסד'],
+      mosadName: r['שם מוסד'],
+      tchula:    r['חודש תחולה'],
+      hefresh:   hefresh
+    });
+  });
+  return result;
+}
+
+// ================================================
+// בניית פקודות מרשימת שורות וכתיבה לתקופות
+// ================================================
+
+function _buildAndWriteEntries(detailRows, nose, noseCode, mosadMap,
+                                dateToSplit, isDebit, periodA, periodB, rejected, logs) {
+
+  var groups = _groupDetailRows(detailRows);
+
+  Object.values(groups).forEach(function(grp) {
+    var mosadId = grp.mosadId;
+
+    if (!mosadMap[mosadId]) {
+      logs.push(_log('שגיאה',
+        'מוסד לא קיים: ' + mosadId + ' | נושא ' + nose.name +
+        ' | גיליון: ' + grp.sheet + ' שורה ' + grp.rowNum));
+      grp.rows.forEach(function(dr) {
+        rejected.push(_detailRejectedEntry('', nose, dr, isDebit));
+      });
+      return;
+    }
+
+    var seif = _getSeifFromMosad(nose, mosadId, mosadMap, isDebit,
+                                  logs, grp.sheet, noseCode, grp.rowNum);
+    if (!seif) {
+      grp.rows.forEach(function(dr) {
+        rejected.push(_detailRejectedEntry('', nose, dr, isDebit));
+      });
+      return;
+    }
+
+    var amount  = isDebit ? grp.total * -1 : grp.total;
+    var lastDay = _lastDayOfMonth(grp.tchula);
+    var desc    = _buildDesc(nose.name, nose.code, grp.mosadName, grp.tchula);
+
+    var entry = isDebit
+      ? [seif,  '', lastDay, desc, noseCode, mosadId, amount, '']
+      : ['', seif, lastDay, desc, noseCode, mosadId, '',    amount];
+
+    if (grp.tchula < dateToSplit) { periodA.push(entry); }
+    else                          { periodB.push(entry); }
+  });
+}
+
+// ================================================
+// קיבוץ שורות פירוט לפי נושא+מוסד+תחולה
+// ================================================
+
+function _groupDetailRows(detailRows) {
+  var groups = {};
+  detailRows.forEach(function(dr) {
+    var key = dr.mosadId + '|' + _monthKey(dr.tchula);
+    if (!groups[key]) {
+      groups[key] = {
+        mosadId:   dr.mosadId,
+        mosadName: dr.mosadName,
+        tchula:    dr.tchula,
+        total:     0,
+        sheet:     dr.sheet,
+        rowNum:    dr.rowNum,
+        rows:      []
+      };
+    }
+    groups[key].total += dr.hefresh;
+    groups[key].rows.push(dr);
+  });
+  return groups;
+}
+
+// ================================================
+// קבלת סעיף ממוסד לפי שם עמודה + כיוון
+// ================================================
+
+function _getSeifFromMosad(nose, mosadId, mosadMap, isDebit, logs, sheetName, noseCode, rowNum) {
+  var mosadRow = mosadMap[mosadId];
+  if (!mosadRow) return '';
+
+  // בחירת עמודת הסעיף לפי כיוון + שם נושא במוסדות
+  var colName;
+
+  if (nose.mosadColName) {
+    // משתמשים בשם העמודה הספציפי מגיליון נושאים
+    colName = nose.mosadColName;
+  } else {
+    // fallback: לפי כיוון בלבד
+    colName = isDebit ? 'סעיף חובה' : 'סעיף זכות';
+  }
+
+  var seif = mosadRow[colName];
+
+  if (!seif) {
+    logs.push(_log('שגיאה',
+      'סעיף חסר למוסד ' + mosadId +
+      ' | עמודה: ' + colName +
+      ' | נושא: ' + nose.name +
+      ' (' + noseCode + ')' +
+      ' | גיליון: ' + sheetName + ' שורה ' + rowNum));
+    return '';
+  }
+
+  return seif;
+}
+
+// ================================================
+// כתיבת פלט לגיליונות
+// ================================================
+
+function _writeOutput(result, logs) {
+  var lastDay = new Date();
+
+  // סיכום חשבוניות לפי תקופה
+  var invTotals = _calcInvoiceTotals();
+
+  // תקופה ראשונה
+  var pA = result.periodA.slice();
+  pA.push(['7100001000', '', lastDay, 'חוז משרד החינוך', '', '', invTotals.A, '']);
+  sp.getSheetByName('תקופה ראשונה').getRange(2, 1, pA.length, 8).setValues(pA);
+
+  // תקופה שניה
+  if (result.periodB.length > 0) {
+    var pB = result.periodB.slice();
+    pB.push(['7100001000', '', lastDay, 'חוז משרד החינוך', '', '', invTotals.B, '']);
+    sp.getSheetByName('תקופה שניה').getRange(2, 1, pB.length, 8).setValues(pB);
+  }
+
+  // תנועות שלא נקלטו
+  if (result.rejected.length > 0) {
+    sp.getSheetByName('תנועות שלא נקלטו')
+      .getRange(2, 1, result.rejected.length, 8)
+      .setValues(result.rejected);
+  }
+
+  // השוואה
+  if (result.hashvha.length > 0) {
+    sp.getSheetByName('השוואה')
+      .getRange(2, 1, result.hashvha.length, 4)
+      .setValues(result.hashvha);
+  }
+
+  logs.push(_log('מידע',
+    'כתיבה הסתיימה | תקופה א: ' + result.periodA.length +
+    ' | תקופה ב: ' + result.periodB.length +
+    ' | לא נקלטו: ' + result.rejected.length));
+}
+
+// ================================================
+// חישוב סיכום חשבוניות לפי תקופה לשורת הסיכום
+// ================================================
+
+function _calcInvoiceTotals() {
+  var dateToSplit = sp.getRangeByName('dateToSp').getValue();
+  var ws = sp.getSheetByName('חשבוניות');
+  var headers = ws.getSheetValues(1, 1, 1, ws.getLastColumn())[0];
+  var rows    = ws.getSheetValues(2, 1, ws.getLastRow() - 1, headers.length);
+
+  var tculaIdx   = headers.indexOf('חודש תחולה');
+  var hefreshIdx = headers.indexOf('יתרת ביצוע החודש');
+
+  var sumA = 0, sumB = 0;
+  rows.forEach(function(r) {
+    var val = r[hefreshIdx] || 0;
+    if (r[tculaIdx] < dateToSplit) { sumA += val; }
+    else                           { sumB += val; }
+  });
+  return { A: sumA, B: sumB };
+}
+
+// ================================================
+// ניקוי גיליונות פלט
+// ================================================
+
+function _clearOutputSheets() {
+  sp.getSheetByName('השוואה').getRange('A2:D').clear();
+  sp.getSheetByName('תנועות שלא נקלטו').getRange('A2:H').clear();
+  sp.getSheetByName('תקופה ראשונה').getRange('A2:H').clear();
+  sp.getSheetByName('תקופה שניה').getRange('A2:H').clear();
+  sp.getSheetByName('לוג תקלות').getRange('A2:F').clear();
+  sp.getRangeByName('newNose').clear();
+}
+
+// ================================================
+// כתיבת לוג
+// ================================================
+
+function _writeLogs(logs) {
+  if (!logs.length) return;
+  sp.getSheetByName('לוג תקלות').getRange(2, 1, logs.length, 5).setValues(logs);
+}
+
+function _log(level, desc) {
+  return [new Date(), level, desc, '', ''];
+}
+
+// ================================================
+// עזרים
+// ================================================
+
+function _buildDesc(noseName, noseCode, mosadName, tchula) {
+  var tculaStr = _fmtDate(tchula);
+  return noseName + ' | ' + noseCode + ' | ' + (mosadName || '') + ' | ' + tculaStr;
+}
+
+function _lastDayOfMonth(d) {
+  if (!d) return new Date();
+  var dt = new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth() + 1, 0);
+}
+
+function _monthKey(d) {
+  if (!d) return '';
+  var dt = new Date(d);
+  return (dt.getMonth() + 1) + '/' + dt.getFullYear();
+}
+
+function _fmtDate(d) {
+  if (!d) return '';
+  var dt = new Date(d);
+  return (dt.getMonth() + 1) + '/' + dt.getFullYear();
+}
+
+function _fmt(n) {
+  return Math.round(n * 100) / 100;
+}
+
+// ================================================
+// בניית שורת דחייה מחשבונית
+// ================================================
+
+function _rejectedEntry(seif, zhut, inv, noseCode, mosadId, hefresh) {
+  var tchula  = inv['חודש תחולה'];
+  var lastDay = _lastDayOfMonth(tchula);
+  var desc    = _buildDesc(inv['תאור נושא'] || '', noseCode, inv['שם מוטב'] || '', tchula);
+  return [seif || '', zhut || '', lastDay, desc, noseCode, mosadId || '', hefresh * -1 || '', hefresh || ''];
+}
+
+// ================================================
+// בניית שורת דחייה משורת פירוט (מוכרים/שרתים)
+// ================================================
+
+function _detailRejectedEntry(seif, nose, dr, isDebit) {
+  var lastDay = _lastDayOfMonth(dr.tchula);
+  var desc    = _buildDesc(nose.name, nose.code, dr.mosadName, dr.tchula);
+  var amount  = isDebit ? dr.hefresh * -1 : dr.hefresh;
+  return isDebit
+    ? [seif || '', '', lastDay, desc, nose.code, dr.mosadId, amount, '']
+    : ['', seif || '', lastDay, desc, nose.code, dr.mosadId, '',    amount];
+}  הז קוד שמכין את הפקודה בצורה הטובה ביותר כדי להתאים את הקוד הזה יש לעדכן את הקולקשן נושאים במונגו ולהוסיף לו שדות כדי שזה יעבוד טוב אני רוצה שתכתוב לי מה אני צריך לעשות במונגו כדי שזה יעבוד ובהתאם תעדכן את הלוגיקה של הכנת פקודה לפי הקוד הזה ובלוגיקה תתאים את כל הוולידציות שהקוד עושה נא כתוב לי מה הבנתה ומה יש לשנות כדי שהלוגיקה הזו תעבוד

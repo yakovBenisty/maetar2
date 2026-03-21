@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/upload)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/prepare)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/runs)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/reports)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/noseme)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/mosdot)",
+      "Bash(node -e \":*)",
+      "Bash(cmd /c \"wmic process where ProcessId=11980 get CommandLine\")",
+      "Bash(cmd /c \"tasklist /FI \"\"PID eq 11980\"\"\")",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(cmd /c \"taskkill /PID 11980 /F\")",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 11980 -Force\"\"\")",
+      "Bash(curl -s http://localhost:3003/api/dashboard/stats)",
+      "Bash(curl -s --max-time 15 \"http://localhost:3003/api/dashboard/stats\")",
+      "Bash(cmd /c \"powershell -Command \"\"@\\(11980, 3700, 8744, 1788\\) | ForEach-Object { try { Stop-Process -Id $_-Force -ErrorAction Stop; Write-Host \"\"Killed $_\" } catch { Write-Host \"\"Failed $_\" } }\"\"\")",
+      "Bash(curl -s --max-time 10 \"http://localhost:4000/api/dashboard/stats\")",
+      "Bash(npm list:*)"
+    ]
+  }
+}
