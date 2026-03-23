@@ -4,6 +4,7 @@ import MicrosoftEntraID from 'next-auth/providers/microsoft-entra-id';
 
 // Edge-safe config — no DB imports here (used by middleware)
 export const authConfig: NextAuthConfig = {
+  trustHost: true,
   providers: [
     Google({
       clientId: process.env.AUTH_GOOGLE_ID!,
