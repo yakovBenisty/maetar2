@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { exportToCsv } from '@/app/components/exportCsv';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, ColDef } from 'ag-grid-community';
@@ -62,7 +62,16 @@ const RESULT_TABS = [
 ] as const;
 
 function formatCurrency(amount: number): string {
-  return amount?.toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) ?? '';
+  if (amount == null) return '';
+  const truncated = Math.trunc(amount * 10) / 10;
+  return truncated.toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function formatDateDMY(value: unknown): string {
+  if (!value) return '';
+  const d = new Date(String(value));
+  if (isNaN(d.getTime())) return String(value);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
 const commandColDefs: ColDef[] = [
@@ -82,11 +91,7 @@ const commandColDefs: ColDef[] = [
     field: 'תאריך_ערך',
     headerName: 'תאריך ערך',
     width: 110,
-    valueFormatter: (p: { value: unknown }) => {
-      if (!p.value) return '';
-      const d = new Date(String(p.value));
-      return `${d.getUTCDate()}/${d.getUTCMonth() + 1}/${d.getUTCFullYear()}`;
-    },
+    valueFormatter: (p: { value: unknown }) => formatDateDMY(p.value),
   },
   { field: 'תיאור', headerName: 'תיאור', flex: 2, minWidth: 200 },
   { field: 'קוד_נושא', headerName: 'אסמכתא ראשית', width: 120 },
@@ -116,14 +121,14 @@ const COMMAND_CSV_COLS = [
       (row['seif_hova'] != null && row['seif_hova'] !== 0 && row['seif_hova'] !== '') ? row['seif_hova'] : '' },
   { header: 'סעיף זכות', getValue: (row: Record<string, unknown>) =>
       (row['seif_zhut'] != null && row['seif_zhut'] !== 0 && row['seif_zhut'] !== '') ? row['seif_zhut'] : '' },
-  { header: 'תאריך ערך', field: 'תאריך_ערך' },
+  { header: 'תאריך ערך', getValue: (row: Record<string, unknown>) => formatDateDMY(row['תאריך_ערך']) },
   { header: 'תיאור', field: 'תיאור' },
   { header: 'אסמכתא ראשית', field: 'קוד_נושא' },
   { header: 'אסמכתא משנית', field: 'סמל_מוסד' },
   { header: 'חובה', getValue: (row: Record<string, unknown>) =>
-      row['סכום_חובה'] != null ? Number(row['סכום_חובה']) : '' },
+      row['סכום_חובה'] != null ? Math.trunc(Number(row['סכום_חובה']) * 10) / 10 : '' },
   { header: 'זכות', getValue: (row: Record<string, unknown>) =>
-      row['סכום_זכות'] != null ? Number(row['סכום_זכות']) : '' },
+      row['סכום_זכות'] != null ? Math.trunc(Number(row['סכום_זכות']) * 10) / 10 : '' },
 ];
 
 const LOG_CSV_COLS = [
@@ -207,6 +212,9 @@ function lastDayOfCurrentMonth(): string {
   return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
 }
 
+const SESSION_META_KEY = 'prepare_meta';
+const SESSION_RESULT_KEY = 'prepare_result';
+
 export default function PreparePage() {
   const [phase, setPhase] = useState<Phase>('input');
   const [calcMonth, setCalcMonth] = useState('');
@@ -217,6 +225,38 @@ export default function PreparePage() {
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [resultTab, setResultTab] = useState<string>('summary');
   const [errorMsg, setErrorMsg] = useState('');
+  const isFirstSave = useRef(true);
+
+  // טעינת מצב שמור — פעם אחת בלבד בעת כניסה לדף
+  useEffect(() => {
+    try {
+      const meta = sessionStorage.getItem(SESSION_META_KEY);
+      if (meta) {
+        const s = JSON.parse(meta);
+        if (s.calcMonth)  setCalcMonth(s.calcMonth);
+        if (s.splitMonth) setSplitMonth(s.splitMonth);
+        if (s.valueDate)  setValueDate(s.valueDate);
+        if (s.phase)      setPhase(s.phase);
+        if (s.resultTab)  setResultTab(s.resultTab);
+      }
+      const resultStr = sessionStorage.getItem(SESSION_RESULT_KEY);
+      if (resultStr) setResult(JSON.parse(resultStr));
+    } catch { /* sessionStorage not available */ }
+  }, []);
+
+  // שמירת מצב — מדלג על הריצה הראשונה (לפני שהטעינה מ-sessionStorage הסתיימה)
+  useEffect(() => {
+    if (isFirstSave.current) { isFirstSave.current = false; return; }
+    try {
+      sessionStorage.setItem(SESSION_META_KEY, JSON.stringify({
+        calcMonth, splitMonth, valueDate, phase, resultTab,
+      }));
+    } catch { /* ignore */ }
+    try {
+      if (result) sessionStorage.setItem(SESSION_RESULT_KEY, JSON.stringify(result));
+      else        sessionStorage.removeItem(SESSION_RESULT_KEY);
+    } catch { /* result too large — skip */ }
+  }, [calcMonth, splitMonth, valueDate, phase, result, resultTab]);
 
   useEffect(() => {
     fetch('/api/mongo/months')

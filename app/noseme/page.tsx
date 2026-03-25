@@ -22,6 +22,13 @@ interface NosemeRecord {
   updated_at?: string;
 }
 
+const MOSAD_COL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'nihul_atsmi', label: 'ניהול עצמי' },
+  { value: 'hazana',      label: 'הזנה' },
+  { value: 'krav',        label: 'קרב' },
+  { value: 'sachar',      label: 'שכר' },
+];
+
 const emptyForm: NosemeRecord = {
   code: '',
   name: '',
@@ -447,13 +454,26 @@ export default function NosemePage() {
             </div>
             <div>
               <label className="block text-sm text-[#636c76] mb-1">שדה מוסד (לנושאי מוסדות)</label>
-              <input
-                type="text"
-                value={form.mosad_col_name}
-                onChange={(e) => setForm((f) => ({ ...f, mosad_col_name: e.target.value }))}
-                placeholder="שם שדה ב-MOSDOT (כגון nihul_atsmi)"
-                className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]"
-              />
+              {form.table_type === 'מוסדות' ? (
+                <select
+                  value={form.mosad_col_name}
+                  onChange={(e) => setForm((f) => ({ ...f, mosad_col_name: e.target.value }))}
+                  className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]"
+                >
+                  <option value="">-- בחר שדה מוסד --</option>
+                  {MOSAD_COL_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label} ({o.value})</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={form.mosad_col_name}
+                  disabled
+                  placeholder="זמין רק לנושאי מוסדות"
+                  className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#8c959f] rounded-lg px-3 py-2 text-sm opacity-50 cursor-not-allowed"
+                />
+              )}
             </div>
           </div>
           <div className="mt-4 flex gap-3">
