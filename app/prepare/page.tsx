@@ -420,72 +420,112 @@ export default function PreparePage() {
             <div className="p-6">
               {resultTab === 'summary' && result.tabs?.summary && (() => {
                 const s = result.tabs.summary;
-                const net = s.totalIncome - s.totalExpense;
-                const diff = s.invoiceTotal - Math.abs(net);
+                const p1 = (result.tabs.period1 ?? []) as Record<string, unknown>[];
+                const p2 = (result.tabs.period2 ?? []) as Record<string, unknown>[];
+
+                const p1Debit  = p1.reduce((sum, r) => sum + (Number(r['סכום_חובה']) || 0), 0);
+                const p1Credit = p1.reduce((sum, r) => sum + (Number(r['סכום_זכות']) || 0), 0);
+                const p2Debit  = p2.reduce((sum, r) => sum + (Number(r['סכום_חובה']) || 0), 0);
+                const p2Credit = p2.reduce((sum, r) => sum + (Number(r['סכום_זכות']) || 0), 0);
+
+                const p1Hoz = p1
+                  .filter((r) => String(r['תיאור']).includes('חוז משרד החינוך'))
+                  .reduce((sum, r) => sum + (Number(r['סכום_חובה']) || 0) + (Number(r['סכום_זכות']) || 0), 0);
+                const p2Hoz = p2
+                  .filter((r) => String(r['תיאור']).includes('חוז משרד החינוך'))
+                  .reduce((sum, r) => sum + (Number(r['סכום_חובה']) || 0) + (Number(r['סכום_זכות']) || 0), 0);
+
+                const totalDebit  = p1Debit + p2Debit;
+                const totalCredit = p1Credit + p2Credit;
+                const totalHoz    = p1Hoz + p2Hoz;
+
+                const thCls = 'text-right text-xs font-semibold text-[#636c76] px-4 py-2 bg-[#f0f3f6]';
+                const tdCls = 'text-right px-4 py-2.5 font-mono text-sm text-[#1f2328]';
+                const tdTotalCls = 'text-right px-4 py-2.5 font-mono text-sm font-bold text-[#1f2328] bg-[#f6f8fa]';
+                const labelCls = 'text-right px-4 py-2.5 text-sm font-medium text-[#1f2328]';
+
                 return (
                   <div className="space-y-6">
-                    {/* סכומים ראשיים */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-[#636c76] mb-3 uppercase tracking-wide">סכומי פקודות</h3>
-                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="bg-[#f6f8fa] border border-[#1a7f37] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">סה"כ הכנסות (זכות)</p>
-                          <p className="text-xl font-bold text-[#1a7f37]">{formatCurrency(s.totalIncome)}</p>
-                        </div>
-                        <div className="bg-[#f6f8fa] border border-[#cf222e] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">סה"כ הוצאות (חובה)</p>
-                          <p className="text-xl font-bold text-[#cf222e]">{formatCurrency(s.totalExpense)}</p>
-                        </div>
-                        <div className="bg-[#f6f8fa] border border-[#0969da] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">נטו (הכנסות פחות הוצאות)</p>
-                          <p className={`text-xl font-bold ${net >= 0 ? 'text-[#1a7f37]' : 'text-[#cf222e]'}`}>{formatCurrency(net)}</p>
-                        </div>
+                    {/* סה"כ בחשבוניות */}
+                    <div className="flex justify-end">
+                      <div className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4 min-w-[220px] text-right">
+                        <p className="text-xs text-[#636c76] mb-1">סה&quot;כ בחשבוניות</p>
+                        <p className="text-xl font-bold text-[#1f2328]">{formatCurrency(s.invoiceTotal)}</p>
                       </div>
                     </div>
 
-                    {/* חשבוניות + השוואה */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-[#636c76] mb-3 uppercase tracking-wide">השוואה לחשבוניות</h3>
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">סה"כ חשבוניות</p>
-                          <p className="text-xl font-bold text-[#1f2328]">{formatCurrency(s.invoiceTotal)}</p>
-                        </div>
-                        <div className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">חשבוניות תקופה ראשונה</p>
-                          <p className="text-xl font-bold text-[#1f2328]">{formatCurrency(s.period1InvoiceTotal)}</p>
-                        </div>
-                        <div className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4">
-                          <p className="text-xs text-[#636c76] mb-1">חשבוניות תקופה שנייה</p>
-                          <p className="text-xl font-bold text-[#1f2328]">{formatCurrency(s.period2InvoiceTotal)}</p>
-                        </div>
-                        <div className={`bg-[#f6f8fa] border rounded-lg p-4 ${Math.abs(diff) <= 1 ? 'border-[#1a7f37]' : 'border-[#cf222e]'}`}>
-                          <p className="text-xs text-[#636c76] mb-1">הפרש (חשבוניות פחות נטו)</p>
-                          <p className={`text-xl font-bold ${Math.abs(diff) <= 1 ? 'text-[#1a7f37]' : 'text-[#cf222e]'}`}>
-                            {Math.abs(diff) <= 1 ? '✓ ' : ''}{formatCurrency(diff)}
-                          </p>
-                        </div>
-                      </div>
+                    {/* טבלת זכות / חובה / הפרש */}
+                    <div className="overflow-x-auto rounded-lg border border-[#d1d9e0]">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="border-b border-[#d1d9e0]">
+                            <th className={thCls + ' w-40'}></th>
+                            <th className={thCls}>תקופה ראשונה</th>
+                            <th className={thCls}>תקופה שניה</th>
+                            <th className={thCls + ' border-r border-[#d1d9e0]'}>סה&quot;כ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b border-[#d1d9e0]">
+                            <td className={labelCls}>זכות</td>
+                            <td className={tdCls}>{formatCurrency(p1Credit)}</td>
+                            <td className={tdCls}>{formatCurrency(p2Credit)}</td>
+                            <td className={tdTotalCls}>{formatCurrency(totalCredit)}</td>
+                          </tr>
+                          <tr className="border-b border-[#d1d9e0]">
+                            <td className={labelCls}>חובה</td>
+                            <td className={tdCls}>{formatCurrency(p1Debit)}</td>
+                            <td className={tdCls}>{formatCurrency(p2Debit)}</td>
+                            <td className={tdTotalCls}>{formatCurrency(totalDebit)}</td>
+                          </tr>
+                          <tr>
+                            <td className={labelCls + ' text-[#636c76]'}>הפרש בין חובה לזכות</td>
+                            {[p1Debit - p1Credit, p2Debit - p2Credit, totalDebit - totalCredit].map((diff, i) => (
+                              <td key={i} className={`${i === 2 ? tdTotalCls : tdCls} ${Math.abs(diff) > 1 ? 'text-[#cf222e]' : 'text-[#1a7f37]'}`}>
+                                {formatCurrency(diff)}
+                              </td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
 
-                    {/* תקופות ומצב */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-[#636c76] mb-3 uppercase tracking-wide">תקופות ומצב</h3>
-                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                        {[
-                          { label: 'סה"כ פקודות', value: s.total, color: 'text-[#0969da]' },
-                          { label: 'פקודות תקופה ראשונה', value: s.period1, color: 'text-[#0969da]' },
-                          { label: 'פקודות תקופה שנייה', value: s.period2, color: 'text-[#0969da]' },
-                          { label: 'שגיאות', value: s.errors, color: 'text-[#cf222e]' },
-                          { label: 'אזהרות', value: s.warnings, color: 'text-[#9a6700]' },
-                          { label: 'לא נקלטו', value: s.rejected, color: 'text-[#cf222e]' },
-                        ].map((card) => (
-                          <div key={card.label} className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4">
-                            <p className="text-xs text-[#636c76] mb-1">{card.label}</p>
-                            <p className={`text-xl font-bold ${card.color}`}>{card.value}</p>
-                          </div>
-                        ))}
-                      </div>
+                    {/* טבלת חוז */}
+                    <div className="overflow-x-auto rounded-lg border border-[#d1d9e0]">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="border-b border-[#d1d9e0]">
+                            <th className={thCls + ' w-40'}></th>
+                            <th className={thCls}>תקופה ראשונה</th>
+                            <th className={thCls}>תקופה שניה</th>
+                            <th className={thCls + ' border-r border-[#d1d9e0]'}>סה&quot;כ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className={labelCls}>חוז</td>
+                            <td className={tdCls}>{formatCurrency(p1Hoz)}</td>
+                            <td className={tdCls}>{formatCurrency(p2Hoz)}</td>
+                            <td className={tdTotalCls}>{formatCurrency(totalHoz)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* מצב */}
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                      {[
+                        { label: 'שורות תקופה ראשונה', value: p1.length, color: 'text-[#0969da]' },
+                        { label: 'שורות תקופה שניה',   value: p2.length, color: 'text-[#0969da]' },
+                        { label: 'שגיאות',              value: s.errors,  color: 'text-[#cf222e]' },
+                        { label: 'אזהרות',              value: s.warnings, color: 'text-[#9a6700]' },
+                        { label: 'לא נקלטו',            value: s.rejected, color: 'text-[#cf222e]' },
+                      ].map((card) => (
+                        <div key={card.label} className="bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg p-4">
+                          <p className="text-xs text-[#636c76] mb-1">{card.label}</p>
+                          <p className={`text-xl font-bold ${card.color}`}>{card.value}</p>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
