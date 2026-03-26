@@ -57,7 +57,6 @@ const RESULT_TABS = [
   { key: 'period1', label: 'פקודות תקופה ראשונה' },
   { key: 'period2', label: 'פקודות תקופה שנייה' },
   { key: 'logs', label: 'לוג שגיאות' },
-  { key: 'comparison', label: 'הפרשים לתשלום' },
   { key: 'rejected', label: 'לא נקלטו' },
 ] as const;
 
@@ -408,11 +407,6 @@ export default function PreparePage() {
                   }`}
                 >
                   {tab.label}
-                  {tab.key === 'comparison' && (result.tabs?.comparison?.length ?? 0) > 0 && (
-                    <span className="mr-1.5 text-xs bg-[#ffebe9] text-[#cf222e] px-1.5 py-0.5 rounded-full">
-                      {result.tabs.comparison.length}
-                    </span>
-                  )}
                 </button>
               ))}
             </div>
@@ -600,37 +594,7 @@ export default function PreparePage() {
                 </>
               )}
 
-              {resultTab === 'comparison' && (
-                <>
-                  {(result.tabs?.comparison?.length ?? 0) === 0 ? (
-                    <div className="flex items-center justify-center h-32 text-[#1a7f37]">
-                      ✅ אין הפרשים — כל הנושאים תואמים
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex justify-end mb-2">
-                        <button
-                          onClick={() => exportToCsv('הפרשים_לתשלום', COMPARISON_CSV_COLS, result.tabs.comparison as unknown as Record<string, unknown>[])}
-                          className="px-3 py-1.5 bg-[#f0f3f6] hover:bg-[#e2e7ec] border border-[#d1d9e0] text-[#1f2328] text-sm rounded-lg transition-colors flex items-center gap-1.5"
-                        >
-                          📤 יצוא CSV
-                        </button>
-                      </div>
-                      <div className="ag-theme-alpine" style={{ height: 500 }}>
-                        <AgGridReact
-                          theme="legacy"
-                          rowData={result.tabs.comparison}
-                          columnDefs={comparisonColDefs}
-                          enableRtl={true}
-                          defaultColDef={{ sortable: true, resizable: true, filter: true }}
-                        />
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-
-              {resultTab === 'rejected' && (
+{resultTab === 'rejected' && (
                 <>
                   <div className="flex justify-end mb-2">
                     <button
