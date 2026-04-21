@@ -32,10 +32,10 @@ const emptyForm: MosadRecord = {
 const columnDefs: ColDef<MosadRecord>[] = [
   { field: 'code', headerName: 'קוד מוסד', width: 110, filter: true },
   { field: 'name', headerName: 'שם מוסד', flex: 2, minWidth: 150, filter: true },
-  { field: 'nihul_atsmi', headerName: 'ניהול עצמי', flex: 1, minWidth: 120, valueFormatter: (p: { value: unknown }) => p.value != null && p.value !== '' ? Number(p.value).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '' },
-  { field: 'hazana', headerName: 'הזנה', flex: 1, minWidth: 100, valueFormatter: (p: { value: unknown }) => p.value != null && p.value !== '' ? Number(p.value).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '' },
-  { field: 'krav', headerName: 'קרב', flex: 1, minWidth: 100, valueFormatter: (p: { value: unknown }) => p.value != null && p.value !== '' ? Number(p.value).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '' },
-  { field: 'sachar', headerName: 'שכר', flex: 1, minWidth: 100, valueFormatter: (p: { value: unknown }) => p.value != null && p.value !== '' ? Number(p.value).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '' },
+  { field: 'nihul_atsmi', headerName: 'ניהול עצמי', flex: 1, minWidth: 120 },
+  { field: 'hazana', headerName: 'הזנה', flex: 1, minWidth: 100 },
+  { field: 'krav', headerName: 'קרב', flex: 1, minWidth: 100 },
+  { field: 'sachar', headerName: 'שכר', flex: 1, minWidth: 100 },
 ];
 
 export default function MosdotPage() {
@@ -280,17 +280,32 @@ export default function MosdotPage() {
             📥 ייבוא מ-Excel / CSV
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportExcel} className="hidden" />
           </label>
+          <button
+            type="button"
+            onClick={() => exportToCsv('template_mosdot', [
+              { header: 'קוד' },
+              { header: 'שם' },
+              { header: 'ניהול_עצמי' },
+              { header: 'הזנה' },
+              { header: 'קרב' },
+              { header: 'שכר' },
+            ], [{ 'קוד': '', 'שם': '', 'ניהול_עצמי': '', 'הזנה': '', 'קרב': '', 'שכר': '' }])}
+            className="px-4 py-2 bg-[#f0f3f6] hover:bg-[#e2e7ec] border border-[#d1d9e0] text-[#1f2328] text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+            title="הורד קובץ CSV למילוי"
+          >
+            📋 תבנית למילוי
+          </button>
           <ImportInfoButton
             title="דרישות ייבוא — מוסדות"
             columns={[
-              { name: 'קוד', aliases: ['code'], required: true },
+              { name: 'קוד', aliases: ['code'], required: true, note: 'חובה — חייב להתאים לסמל_מוסד בנתוני המוכרים/שרתים' },
               { name: 'שם', aliases: ['name'] },
-              { name: 'ניהול_עצמי', aliases: ['nihul_atsmi'] },
-              { name: 'הזנה', aliases: ['hazana'] },
-              { name: 'קרב', aliases: ['krav'] },
-              { name: 'שכר', aliases: ['sachar'] },
+              { name: 'ניהול_עצמי', aliases: ['nihul_atsmi'], note: 'קוד סעיף — נדרש לנושאים עם mosad_col_name=nihul_atsmi' },
+              { name: 'הזנה', aliases: ['hazana'], note: 'קוד סעיף — נדרש לנושאים עם mosad_col_name=hazana' },
+              { name: 'קרב', aliases: ['krav'], note: 'קוד סעיף — נדרש לנושאים עם mosad_col_name=krav' },
+              { name: 'שכר', aliases: ['sachar'], note: 'קוד סעיף — נדרש לנושאים עם mosad_col_name=sachar' },
             ]}
-            extra="כל עמודה מכילה את קוד הסעיף עבור אותו סוג תשלום למוסד."
+            extra="כל עמודה מספקת קוד סעיף בהתאם לשדה שמוגדר בנושא (mosad_col_name). מוסד שחסר לו סעיף יגרום לדחיית הפקודה בחישוב."
           />
         </div>
 

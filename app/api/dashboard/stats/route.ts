@@ -37,6 +37,8 @@ export async function GET() {
       collections: counts,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[dashboard/stats] MongoDB error:', message);
     return NextResponse.json(
       {
         connected: false,
@@ -44,7 +46,7 @@ export async function GET() {
         runsCount: 0,
         errorRunsCount: 0,
         collections: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: message,
       },
       { status: 500 }
     );

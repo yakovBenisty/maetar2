@@ -7,8 +7,11 @@ const globalWithMongo = global as typeof globalThis & { _mongoClient?: MongoClie
 
 export async function getDb(): Promise<Db> {
   if (!globalWithMongo._mongoClient) {
-    globalWithMongo._mongoClient = new MongoClient(MONGO_URI);
-    await globalWithMongo._mongoClient.connect();
+    const client = new MongoClient(MONGO_URI, {
+      serverSelectionTimeoutMS: 10000,
+    });
+    await client.connect();
+    globalWithMongo._mongoClient = client;
   }
   return globalWithMongo._mongoClient.db(DB_NAME);
 }

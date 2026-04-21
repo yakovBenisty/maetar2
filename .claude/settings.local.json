@@ -20,7 +20,9 @@
       "Bash(curl -s --max-time 15 \"http://localhost:3003/api/dashboard/stats\")",
       "Bash(cmd /c \"powershell -Command \"\"@\\(11980, 3700, 8744, 1788\\) | ForEach-Object { try { Stop-Process -Id $_-Force -ErrorAction Stop; Write-Host \"\"Killed $_\" } catch { Write-Host \"\"Failed $_\" } }\"\"\")",
       "Bash(curl -s --max-time 10 \"http://localhost:4000/api/dashboard/stats\")",
-      "Bash(npm list:*)"
+      "Bash(npm list:*)",
+      "Bash(curl:*)",
+      "Bash(cd:*)"
     ]
   }
 }

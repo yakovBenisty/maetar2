@@ -62,7 +62,15 @@ const columnDefs: ColDef<NosemeRecord>[] = [
     },
   },
   { field: 'seif', headerName: 'סעיף (שונות)', flex: 1, minWidth: 120, filter: true },
-  { field: 'mosad_col_name', headerName: 'שדה מוסד', flex: 1, minWidth: 120, filter: true },
+  {
+    field: 'mosad_col_name',
+    headerName: 'שדה מוסד',
+    flex: 1,
+    minWidth: 120,
+    filter: true,
+    valueFormatter: (p: { value: string }) =>
+      MOSAD_COL_OPTIONS.find((o) => o.value === p.value)?.label ?? p.value ?? '',
+  },
 ];
 
 export default function NosemePage() {
@@ -279,7 +287,7 @@ export default function NosemePage() {
     name: '', table_type: '', direction: '', seif: '', mosad_col_name: '', seif_zhut: '', seif_hova: '',
   }], [rows]);
 
-  const colDefsWithActions: ColDef<NosemeRecord>[] = [
+  const colDefsWithActions = useMemo<ColDef<NosemeRecord>[]>(() => [
     ...columnDefs,
     {
       headerName: 'פעולות',
@@ -308,7 +316,7 @@ export default function NosemePage() {
         }
       },
     },
-  ];
+  ], [rows, handleEdit, handleDelete]);
 
   return (
     <div>
@@ -351,17 +359,30 @@ export default function NosemePage() {
             📥 ייבוא מ-Excel / CSV
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportExcel} className="hidden" />
           </label>
+          <button
+            type="button"
+            onClick={() => exportToCsv('template_noseme', [
+              { header: 'קוד נושא' },
+              { header: 'שם נושא' },
+              { header: 'איתור סעיף' },
+              { header: 'כיוון' },
+              { header: 'סעיף' },
+              { header: 'שם נושא במוסדות' },
+            ], [{ 'קוד נושא': '', 'שם נושא': '', 'איתור סעיף': 'שונות / מוסדות', 'כיוון': 'חובה / זכות', 'סעיף': '', 'שם נושא במוסדות': 'nihul_atsmi / hazana / krav / sachar' }])}
+            className="px-4 py-2 bg-[#f0f3f6] hover:bg-[#e2e7ec] border border-[#d1d9e0] text-[#1f2328] text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+            title="הורד קובץ CSV למילוי"
+          >
+            📋 תבנית למילוי
+          </button>
           <ImportInfoButton
             title="דרישות ייבוא — נושאים"
             columns={[
               { name: 'קוד נושא', aliases: ['code', 'קוד'], required: true },
-              { name: 'נושא', aliases: ['name', 'שם', 'שם נושא'] },
-              { name: 'איתור סעיף', aliases: ['table_type', 'סוג טבלה'], note: 'ערכים: שונות / מוסדות' },
-              { name: 'כיוון', aliases: ['direction'], note: 'ערכים: חובה / זכות' },
-              { name: 'סעיף', aliases: ['seif'], note: 'לנושאי שונות — קוד הסעיף הישיר' },
-              { name: 'שם נושא במוסדות', aliases: ['mosad_col_name', 'שדה מוסד'], note: 'לנושאי מוסדות — שם השדה ב-MOSDOT' },
-              { name: 'סעיף חובה', aliases: ['seif_hova'] },
-              { name: 'סעיף זכות', aliases: ['seif_zhut'] },
+              { name: 'שם נושא', aliases: ['name', 'שם', 'נושא'] },
+              { name: 'איתור סעיף', aliases: ['table_type', 'סוג טבלה'], required: true, note: 'חובה — ערכים: שונות / מוסדות' },
+              { name: 'כיוון', aliases: ['direction'], required: true, note: 'חובה — ערכים: חובה / זכות' },
+              { name: 'סעיף', aliases: ['seif'], note: 'חובה לנושאי שונות — קוד הסעיף הישיר' },
+              { name: 'שם נושא במוסדות', aliases: ['mosad_col_name', 'שדה מוסד'], note: 'חובה לנושאי מוסדות — ערכים: nihul_atsmi / hazana / krav / sachar' },
             ]}
             extra="שדות ריקים לא מחליפים נתונים קיימים — ניתן לייבא עדכון חלקי."
           />
