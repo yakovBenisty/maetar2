@@ -11,6 +11,16 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 type Phase = 'input' | 'results';
 
+interface RunSummary {
+  run_id: string;
+  calc_month_display: string;
+  split_month_display: string;
+  status: string;
+  commands: number;
+  errors: number;
+  started_at: string;
+}
+
 interface SummaryStats {
   total: number;
   totalAmount: number;
@@ -221,9 +231,11 @@ export default function PreparePage() {
   const [valueDate, setValueDate] = useState<string>(lastDayOfCurrentMonth());
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [resultTab, setResultTab] = useState<string>('summary');
   const [errorMsg, setErrorMsg] = useState('');
+  const [pastRuns, setPastRuns] = useState<RunSummary[]>([]);
   const isFirstSave = useRef(true);
 
   // טעינת מצב שמור — פעם אחת בלבד בעת כניסה לדף
@@ -262,6 +274,33 @@ export default function PreparePage() {
       .then((r) => r.json())
       .then((d: { months: string[] }) => setAvailableMonths(d.months ?? []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/runs')
+      .then((r) => r.json())
+      .then((d: { runs: RunSummary[] }) => setPastRuns(d.runs ?? []))
+      .catch(() => {});
+  }, []);
+
+  const handleRestore = useCallback(async (runId: string) => {
+    setRestoringId(runId);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+      const data = await res.json() as ProcessResult;
+      if (data.ok) {
+        setResult(data);
+        setPhase('results');
+        setResultTab('summary');
+      } else {
+        setErrorMsg((data as { error?: string }).error ?? 'שגיאה בשיחזור');
+      }
+    } catch {
+      setErrorMsg('שגיאת רשת בשיחזור');
+    } finally {
+      setRestoringId(null);
+    }
   }, []);
 
   const handleProcess = useCallback(async () => {
@@ -375,6 +414,39 @@ export default function PreparePage() {
             </button>
             {errorMsg && <p className="text-[#cf222e] text-sm">{errorMsg}</p>}
           </div>
+
+          {/* Restore past run */}
+          {pastRuns.length > 0 && (
+            <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+              <div className="px-6 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa]">
+                <h2 className="text-sm font-semibold text-[#1f2328]">שיחזור ריצה קודמת</h2>
+              </div>
+              <div className="divide-y divide-[#d1d9e0]">
+                {pastRuns.slice(0, 10).map((run) => (
+                  <div key={run.run_id} className="flex items-center justify-between px-6 py-3 hover:bg-[#f6f8fa]">
+                    <div className="flex items-center gap-6 text-sm">
+                      <span className="text-[#1f2328] font-medium">{run.calc_month_display}</span>
+                      <span className="text-[#636c76]">פיצול: {run.split_month_display}</span>
+                      <span className="text-[#636c76]">{run.commands} פקודות</span>
+                      {run.errors > 0 && (
+                        <span className="text-[#cf222e]">{run.errors} שגיאות</span>
+                      )}
+                      <span className="text-[#8c959f] text-xs">
+                        {run.started_at ? new Date(run.started_at).toLocaleDateString('he-IL') : ''}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(run.run_id)}
+                      disabled={restoringId !== null}
+                      className="px-4 py-1.5 bg-[#ddf4ff] hover:bg-[#b6e3ff] border border-[#54aeff] text-[#0969da] text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {restoringId === run.run_id ? 'טוען...' : 'שיחזור'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

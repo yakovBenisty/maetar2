@@ -361,13 +361,6 @@ export async function POST(req: NextRequest) {
       return { קוד_נושא: code, ...c, matched: matchType !== 'none', matchType };
     });
 
-    // ─── שמירה ל-DB ───────────────────────────────────────────────────────────
-    await db.collection('COMMANDS').deleteMany({ calc_month: calcDate });
-    if (commands.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await db.collection('COMMANDS').insertMany(commands as unknown as any[]);
-    }
-
     const period1Commands = commands.filter((c) => c['תקופה'] === 'ראשונה');
     const period2Commands = commands.filter((c) => c['תקופה'] === 'שנייה');
     const totalIncome  = commands.reduce((s, c) => s + (c.סכום_זכות ?? 0), 0);
@@ -375,21 +368,6 @@ export async function POST(req: NextRequest) {
     const totalAmount  = totalIncome - totalExpense;
     const p1Amount     = period1Commands.reduce((s, c) => s + (c.סכום_זכות ?? 0) - Math.abs(c.סכום_חובה ?? 0), 0);
     const p2Amount     = period2Commands.reduce((s, c) => s + (c.סכום_זכות ?? 0) - Math.abs(c.סכום_חובה ?? 0), 0);
-
-    const runDoc = {
-      run_id: runId,
-      calc_month: calcDate,
-      split_month: splitDate,
-      status: logs.some((l) => l.type === 'error') ? 'error' : 'success',
-      commands: commands.length,
-      total: totalAmount,
-      errors: logs.filter((l) => l.type === 'error').length,
-      warnings: logs.filter((l) => l.type === 'warning').length,
-      unprocessed: rejected.length,
-      started_at: startedAt,
-      completed_at: new Date(),
-    };
-    await db.collection('runs').insertOne(runDoc);
 
     // שורת סיכום (חשבוניות כולל לכל תקופה)
     const p1InvoiceTotal = cheshbonit
@@ -416,6 +394,66 @@ export async function POST(req: NextRequest) {
       created_at: new Date(),
     });
 
+    const p1SummaryRow = p1InvoiceTotal !== 0 ? summaryRow('ראשונה', p1InvoiceTotal) : null;
+    const p2SummaryRow = p2InvoiceTotal !== 0 ? summaryRow('שנייה', p2InvoiceTotal) : null;
+    const allCommandsToSave = [
+      ...commands,
+      ...(p1SummaryRow ? [p1SummaryRow] : []),
+      ...(p2SummaryRow ? [p2SummaryRow] : []),
+    ];
+
+    // ─── שמירה ל-DB ───────────────────────────────────────────────────────────
+    await db.collection('COMMANDS').deleteMany({ calc_month: calcDate });
+    if (allCommandsToSave.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await db.collection('COMMANDS').insertMany(allCommandsToSave as unknown as any[]);
+    }
+
+    const runDoc = {
+      run_id: runId,
+      calc_month: calcDate,
+      split_month: splitDate,
+      status: logs.some((l) => l.type === 'error') ? 'error' : 'success',
+      commands: commands.length,
+      total: totalAmount,
+      errors: logs.filter((l) => l.type === 'error').length,
+      warnings: logs.filter((l) => l.type === 'warning').length,
+      unprocessed: rejected.length,
+      started_at: startedAt,
+      completed_at: new Date(),
+    };
+    await db.collection('runs').insertOne(runDoc);
+
+    // שמור רק 5 ריצות אחרונות — מחק ישנות יותר כולל הנתונים שלהן
+    const MAX_RUNS = 5;
+    const allRuns = await db.collection('runs')
+      .find({}, { projection: { run_id: 1, calc_month: 1 } })
+      .sort({ started_at: -1 })
+      .toArray();
+
+    const keepRuns = allRuns.slice(0, MAX_RUNS);
+    const oldRuns  = allRuns.slice(MAX_RUNS);
+
+    if (oldRuns.length > 0) {
+      const oldRunIds = oldRuns.map((r) => r.run_id as string);
+      await Promise.all([
+        db.collection('runs').deleteMany({ run_id: { $in: oldRunIds } }),
+        db.collection('run_logs').deleteMany({ run_id: { $in: oldRunIds } }),
+      ]);
+    }
+
+    // מחק מ-COMMANDS כל רשומה שאינה שייכת ל-5 הריצות הנוכחיות
+    const keepCalcMonths = keepRuns.map((r) => r.calc_month);
+    await db.collection('COMMANDS').deleteMany({ calc_month: { $nin: keepCalcMonths } });
+
+    // שמירת לוגים ורשומות שלא נקלטו לצורך שיחזור
+    await db.collection('run_logs').insertOne({
+      run_id: runId,
+      calc_month: calcDate,
+      logs,
+      rejected,
+    });
+
     return NextResponse.json({
       ok: true,
       runId,
@@ -436,8 +474,8 @@ export async function POST(req: NextRequest) {
           warnings: logs.filter((l) => l.type === 'warning').length,
           rejected: rejected.length,
         },
-        period1: [...period1Commands, ...(p1InvoiceTotal !== 0 ? [summaryRow('ראשונה', p1InvoiceTotal)] : [])],
-        period2: [...period2Commands, ...(p2InvoiceTotal !== 0 ? [summaryRow('שנייה', p2InvoiceTotal)] : [])],
+        period1: [...period1Commands, ...(p1SummaryRow ? [p1SummaryRow] : [])],
+        period2: [...period2Commands, ...(p2SummaryRow ? [p2SummaryRow] : [])],
         logs,
         comparison,
         rejected,

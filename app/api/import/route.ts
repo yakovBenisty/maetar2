@@ -40,9 +40,16 @@ interface ImportSummaryItem {
   error?: string;
 }
 
+interface ParsedFile {
+  filename: string;
+  collectionName: string;
+  rows: Record<string, unknown>[];
+}
+
 function parseCSVFromBuffer(buffer: Buffer): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const rows: Record<string, unknown>[] = [];
+    let allHeaders: string[] = [];
     const text = buffer.toString('utf-8');
     const readable = Readable.from([text]);
 
@@ -54,8 +61,13 @@ function parseCSVFromBuffer(buffer: Buffer): Promise<Record<string, unknown>[]> 
           escape: '\x00',
         } as Parameters<typeof csvParser>[0])
       )
+      .on('headers', (headers: string[]) => {
+        allHeaders = headers;
+      })
       .on('data', (row: Record<string, string>) => {
         const normalized: Record<string, unknown> = {};
+        // אתחל את כל העמודות ל-null — עמודות חסרות (כגון הערות ריקה) יישמרו כ-null
+        for (const h of allHeaders) normalized[h] = null;
         for (const [key, val] of Object.entries(row)) {
           if (DATE_FIELDS.has(key)) {
             const parsed = parseDateString(String(val));
@@ -87,88 +99,89 @@ export async function POST(req: NextRequest) {
     const runId = `RUN_${Date.now()}`;
     const importTimestamp = new Date();
 
-    for (const file of files) {
-      // Strip any folder path — take only the base filename
-      const filename = (file.name ?? '').split('/').pop()?.split('\\').pop() ?? file.name;
+    // שלב 1: פרסור כל הקבצים במקביל
+    const parsedFiles: ParsedFile[] = [];
 
-      // Skip non-CSV files silently (e.g. other files in the folder)
-      if (!filename.toLowerCase().endsWith('.csv')) continue;
+    await Promise.all(
+      files.map(async (file) => {
+        const filename = (file.name ?? '').split('/').pop()?.split('\\').pop() ?? file.name;
+        if (!filename.toLowerCase().endsWith('.csv')) return;
 
-      const match = FILE_REGEX.exec(filename);
+        const match = FILE_REGEX.exec(filename);
+        if (!match) {
+          summary.push({ filename, collection: 'לא זוהה', rows: 0, status: 'error', error: 'שם הקובץ אינו תואם את הפורמט הנדרש' });
+          return;
+        }
 
-      if (!match) {
-        summary.push({
-          filename,
-          collection: 'לא זוהה',
-          rows: 0,
-          status: 'error',
-          error: 'שם הקובץ אינו תואם את הפורמט הנדרש',
-        });
-        continue;
-      }
+        try {
+          const collectionName = match[4].toUpperCase();
+          const arrayBuffer = await file.arrayBuffer();
+          const rows = await parseCSVFromBuffer(Buffer.from(arrayBuffer));
+          parsedFiles.push({ filename, collectionName, rows });
+        } catch (parseError) {
+          summary.push({
+            filename,
+            collection: match[4].toUpperCase(),
+            rows: 0,
+            status: 'error',
+            error: parseError instanceof Error ? parseError.message : 'שגיאה בפרסור',
+          });
+        }
+      })
+    );
 
-      const collectionName = match[4].toUpperCase();
+    // שלב 2: פעולות DB במקביל — כל קובץ עצמאי לפי source_file
+    await Promise.all(
+      parsedFiles.map(async ({ filename, collectionName, rows }) => {
+        try {
+          // findOne עם projection מהיר יותר מ-countDocuments
+          const existing = await db
+            .collection(collectionName)
+            .findOne({ source_file: filename }, { projection: { _id: 1 } });
 
-      try {
-        const arrayBuffer = await file.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const rows = await parseCSVFromBuffer(buffer);
-
-        const existingCount = await db
-          .collection(collectionName)
-          .countDocuments({ source_file: filename });
-
-        if (existingCount > 0) {
-          if (strategy === 'skip') {
-            summary.push({
-              filename,
-              collection: collectionName,
-              rows: rows.length,
-              status: 'skipped',
-            });
-            continue;
-          } else if (strategy === 'replace') {
+          if (existing) {
+            if (strategy === 'skip') {
+              summary.push({ filename, collection: collectionName, rows: rows.length, status: 'skipped' });
+              return;
+            }
             await db.collection(collectionName).deleteMany({ source_file: filename });
           }
+
+          const docsToInsert = rows.map((row) => ({
+            ...row,
+            source_file: filename,
+            import_timestamp: importTimestamp,
+            run_id: runId,
+            file_type: collectionName,
+          }));
+
+          if (docsToInsert.length > 0) {
+            // ordered: false מאפשר ל-MongoDB לבצע insertים בצורה יעילה יותר
+            await db.collection(collectionName).insertMany(docsToInsert, { ordered: false });
+          }
+
+          summary.push({
+            filename,
+            collection: collectionName,
+            rows: docsToInsert.length,
+            status: existing ? 'replaced' : 'imported',
+          });
+        } catch (fileError) {
+          summary.push({
+            filename,
+            collection: collectionName,
+            rows: 0,
+            status: 'error',
+            error: fileError instanceof Error ? fileError.message : 'שגיאה לא ידועה',
+          });
         }
-
-        const docsToInsert = rows.map((row) => ({
-          ...row,
-          source_file: filename,
-          import_timestamp: importTimestamp,
-          run_id: runId,
-          file_type: collectionName,
-        }));
-
-        if (docsToInsert.length > 0) {
-          await db.collection(collectionName).insertMany(docsToInsert);
-        }
-
-        summary.push({
-          filename,
-          collection: collectionName,
-          rows: docsToInsert.length,
-          status: existingCount > 0 && strategy === 'replace' ? 'replaced' : 'imported',
-        });
-      } catch (fileError) {
-        summary.push({
-          filename,
-          collection: collectionName,
-          rows: 0,
-          status: 'error',
-          error: fileError instanceof Error ? fileError.message : 'שגיאה לא ידועה',
-        });
-      }
-    }
+      })
+    );
 
     return NextResponse.json({ ok: true, runId, summary });
   } catch (error) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'שגיאת שרת',
-        summary,
-      },
+      { ok: false, error: error instanceof Error ? error.message : 'שגיאת שרת', summary },
       { status: 500 }
     );
   }

@@ -162,6 +162,12 @@ export default function ReportsPage() {
     })),
   ], [extraCollections]);
 
+  const dateError = useMemo(() => {
+    if (fromMonth && toMonth && fromMonth > toMonth)
+      return 'תאריך "מחודש" חייב להיות לפני "עד חודש"';
+    return '';
+  }, [fromMonth, toMonth]);
+
   const filteredTopics = topics.filter(
     (t) =>
       !topicSearch ||
@@ -331,7 +337,9 @@ export default function ReportsPage() {
               type="month"
               value={fromMonth}
               onChange={(e) => setFromMonth(e.target.value)}
-              className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]"
+              className={`w-full bg-[#f0f3f6] border text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none ${
+                dateError ? 'border-[#cf222e] focus:border-[#cf222e]' : 'border-[#d1d9e0] focus:border-[#0969da]'
+              }`}
             />
           </div>
 
@@ -342,8 +350,13 @@ export default function ReportsPage() {
               type="month"
               value={toMonth}
               onChange={(e) => setToMonth(e.target.value)}
-              className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]"
+              className={`w-full bg-[#f0f3f6] border text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none ${
+                dateError ? 'border-[#cf222e] focus:border-[#cf222e]' : 'border-[#d1d9e0] focus:border-[#0969da]'
+              }`}
             />
+            {dateError && (
+              <p className="mt-1 text-xs text-[#cf222e]">{dateError}</p>
+            )}
           </div>
         </div>
 
@@ -387,8 +400,8 @@ export default function ReportsPage() {
         <div className="mt-4 flex gap-3">
           <button
             onClick={handleSearch}
-            disabled={loading}
-            className="px-5 py-2 bg-[#1f883d] hover:bg-[#1a7f37] disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+            disabled={loading || !!dateError}
+            className="px-5 py-2 bg-[#1f883d] hover:bg-[#1a7f37] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
           >
             {loading ? '⏳ מחפש...' : '🔍 חפש'}
           </button>
