@@ -15,6 +15,11 @@ interface Topic {
   table_type?: string;
 }
 
+interface Mosad {
+  code: string | number;
+  name?: string;
+}
+
 interface QueryResult {
   ok: boolean;
   data: Record<string, Record<string, unknown>[]>;
@@ -37,6 +42,9 @@ const HEBREW_NAMES: Record<string, string> = {
   GY: 'גן ילדים', HASAOT: 'הסעות', HASNET: 'השנת', HASMASLULIM: 'המסלולים',
   MISROT: 'משרות', MISROTGY: "משרות ג'י", MOADON: 'מועדון', MUTAVIM: 'מוטבים', SHEFI: 'שפי',
 };
+
+const SESSION_REPORTS_META_KEY = 'reports_meta';
+const SESSION_REPORTS_DATA_KEY = 'reports_data';
 
 function numFmt(v: unknown): string {
   if (v == null || v === '') return '';
@@ -79,6 +87,14 @@ export default function ReportsPage() {
   const [topicSearch, setTopicSearch] = useState('');
   const [fromMonth, setFromMonth] = useState('');
   const [toMonth, setToMonth] = useState('');
+  const [fromTachula, setFromTachula] = useState('');
+  const [toTachula, setToTachula] = useState('');
+
+  const [mosdot, setMosdot] = useState<Mosad[]>([]);
+  const [selectedMosdot, setSelectedMosdot] = useState<string[]>([]);
+  const [mosadSearch, setMosadSearch] = useState('');
+  const [mosadDropdownOpen, setMosadDropdownOpen] = useState(false);
+  const mosadDropdownRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState('CHESHBONIT');
   const [results, setResults] = useState<Record<string, Record<string, unknown>[]>>({});
   const [loading, setLoading] = useState(false);
@@ -89,6 +105,8 @@ export default function ReportsPage() {
   const [showColPanel, setShowColPanel] = useState(false);
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
   const colPanelRef = useRef<HTMLDivElement>(null);
+  const isFirstSave = useRef(true);
+  const [filteredData, setFilteredData] = useState<Record<string, unknown>[]>([]);
 
   // Extra collections
   const [availableCollections, setAvailableCollections] = useState<string[]>([]);
@@ -100,6 +118,10 @@ export default function ReportsPage() {
     fetch('/api/reports/topics')
       .then((r) => r.json())
       .then((d: { topics: Topic[] }) => setTopics(d.topics ?? []))
+      .catch(() => {});
+    fetch('/api/mosdot')
+      .then((r) => r.json())
+      .then((d: { mosdot: Mosad[] }) => setMosdot(d.mosdot ?? []))
       .catch(() => {});
     // Fetch all available collections
     fetch('/api/dashboard/stats')
@@ -124,10 +146,57 @@ export default function ReportsPage() {
       if (extraDropdownRef.current && !extraDropdownRef.current.contains(e.target as Node)) {
         setExtraDropdownOpen(false);
       }
+      if (mosadDropdownRef.current && !mosadDropdownRef.current.contains(e.target as Node)) {
+        setMosadDropdownOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Restore session state on mount
+  useEffect(() => {
+    try {
+      const meta = sessionStorage.getItem(SESSION_REPORTS_META_KEY);
+      if (meta) {
+        const s = JSON.parse(meta) as {
+          selectedTopics?: string[];
+          fromMonth?: string;
+          toMonth?: string;
+          fromTachula?: string;
+          toTachula?: string;
+          selectedMosdot?: string[];
+          activeTab?: string;
+          extraCollections?: string[];
+        };
+        if (s.selectedTopics)   setSelectedTopics(s.selectedTopics);
+        if (s.fromMonth)        setFromMonth(s.fromMonth);
+        if (s.toMonth)          setToMonth(s.toMonth);
+        if (s.fromTachula)      setFromTachula(s.fromTachula);
+        if (s.toTachula)        setToTachula(s.toTachula);
+        if (s.selectedMosdot)   setSelectedMosdot(s.selectedMosdot);
+        if (s.activeTab)        setActiveTab(s.activeTab);
+        if (s.extraCollections) setExtraCollections(new Set(s.extraCollections));
+      }
+      const dataStr = sessionStorage.getItem(SESSION_REPORTS_DATA_KEY);
+      if (dataStr) setResults(JSON.parse(dataStr));
+    } catch { /* sessionStorage not available */ }
+  }, []);
+
+  // Save session state on change (skip first run before restore completes)
+  useEffect(() => {
+    if (isFirstSave.current) { isFirstSave.current = false; return; }
+    try {
+      sessionStorage.setItem(SESSION_REPORTS_META_KEY, JSON.stringify({
+        selectedTopics, fromMonth, toMonth, fromTachula, toTachula, selectedMosdot, activeTab,
+        extraCollections: Array.from(extraCollections),
+      }));
+      if (Object.keys(results).length > 0)
+        sessionStorage.setItem(SESSION_REPORTS_DATA_KEY, JSON.stringify(results));
+      else
+        sessionStorage.removeItem(SESSION_REPORTS_DATA_KEY);
+    } catch { /* results too large or storage unavailable */ }
+  }, [selectedTopics, fromMonth, toMonth, fromTachula, toTachula, selectedMosdot, activeTab, extraCollections, results]);
 
   // Default visible fields — all others start hidden
   const DEFAULT_VISIBLE_FIELDS = new Set([
@@ -168,6 +237,12 @@ export default function ReportsPage() {
     return '';
   }, [fromMonth, toMonth]);
 
+  const tachulaDateError = useMemo(() => {
+    if (fromTachula && toTachula && fromTachula > toTachula)
+      return 'תאריך "מחודש תחולה" חייב להיות לפני "עד חודש תחולה"';
+    return '';
+  }, [fromTachula, toTachula]);
+
   const filteredTopics = topics.filter(
     (t) =>
       !topicSearch ||
@@ -177,6 +252,19 @@ export default function ReportsPage() {
 
   const toggleTopic = useCallback((code: string) => {
     setSelectedTopics((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+  }, []);
+
+  const filteredMosdot = mosdot.filter(
+    (m) =>
+      !mosadSearch ||
+      String(m.code).includes(mosadSearch) ||
+      (m.name ?? '').toLowerCase().includes(mosadSearch.toLowerCase())
+  );
+
+  const toggleMosad = useCallback((code: string) => {
+    setSelectedMosdot((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
     );
   }, []);
@@ -193,7 +281,9 @@ export default function ReportsPage() {
           nose_codes: selectedTopics.length > 0 ? selectedTopics : undefined,
           from_month: fromMonth || undefined,
           to_month: toMonth || undefined,
-          limit: 2000,
+          from_tachula: fromTachula || undefined,
+          to_tachula: toTachula || undefined,
+          mosad_codes: selectedMosdot.length > 0 ? selectedMosdot : undefined,
         }),
       });
       const data = await res.json() as QueryResult;
@@ -210,7 +300,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [allCollections, selectedTopics, fromMonth, toMonth]);
+  }, [allCollections, selectedTopics, fromMonth, toMonth, fromTachula, toTachula, selectedMosdot]);
 
   const currentData = results[activeTab] ?? [];
   const colDefs = useMemo(() => buildColDefs(currentData), [activeTab, results]);
@@ -221,6 +311,8 @@ export default function ReportsPage() {
     setHiddenCols(new Set(
       colDefs.map((c) => c.field as string).filter((f) => f && !DEFAULT_VISIBLE_FIELDS.has(f))
     ));
+    // Reset filtered data to full data on tab switch; onModelUpdated will refine if filters active
+    setFilteredData(currentData);
   }, [colDefs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync column visibility with AG Grid after hiddenCols state updates (outside render)
@@ -234,24 +326,32 @@ export default function ReportsPage() {
   }, [hiddenCols, gridApi, colDefs]);
 
   const reportsSummaryRow = useMemo(() => {
-    if (currentData.length === 0) return [];
+    if (filteredData.length === 0) return [];
     const summary: Record<string, unknown> = {};
     let isFirst = true;
     for (const col of colDefs) {
       const field = col.field as string;
       if (!field) continue;
       if (isFirst) {
-        summary[field] = `סה"כ: ${currentData.length.toLocaleString('he-IL')}`;
+        summary[field] = `סה"כ: ${filteredData.length.toLocaleString('he-IL')}`;
         isFirst = false;
       } else {
-        const isNumeric = currentData.some((r) => typeof r[field] === 'number');
+        const isNumeric = filteredData.some((r) => typeof r[field] === 'number');
         summary[field] = isNumeric
-          ? currentData.reduce((s, r) => s + (typeof r[field] === 'number' ? (r[field] as number) : 0), 0)
+          ? filteredData.reduce((s, r) => s + (typeof r[field] === 'number' ? (r[field] as number) : 0), 0)
           : '';
       }
     }
     return [summary];
-  }, [currentData, colDefs]);
+  }, [filteredData, colDefs]);
+
+  const handleModelUpdated = useCallback((params: { api: GridApi }) => {
+    const rows: Record<string, unknown>[] = [];
+    params.api.forEachNodeAfterFilter((node) => {
+      if (node.data) rows.push(node.data as Record<string, unknown>);
+    });
+    setFilteredData(rows);
+  }, []);
 
   return (
     <div>
@@ -360,6 +460,103 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+          {/* Institution multi-select */}
+          <div>
+            <label className="block text-sm text-[#636c76] mb-2">מוסדות</label>
+            <div className="relative" ref={mosadDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setMosadDropdownOpen((o) => !o)}
+                className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm text-right flex items-center justify-between"
+              >
+                <span>
+                  {selectedMosdot.length === 0
+                    ? 'כל המוסדות'
+                    : `${selectedMosdot.length} מוסדות נבחרו`}
+                </span>
+                <span className="mr-2">{mosadDropdownOpen ? '▲' : '▼'}</span>
+              </button>
+              {mosadDropdownOpen && (
+                <div className="absolute z-10 mt-1 w-full bg-white border border-[#d1d9e0] rounded-lg shadow-xl max-h-64 overflow-hidden flex flex-col">
+                  <div className="p-2 border-b border-[#d1d9e0]">
+                    <input
+                      type="text"
+                      value={mosadSearch}
+                      onChange={(e) => setMosadSearch(e.target.value)}
+                      placeholder="חפש לפי קוד או שם מוסד..."
+                      className="w-full bg-[#f6f8fa] border border-[#d1d9e0] text-[#1f2328] rounded px-2 py-1.5 text-sm focus:outline-none focus:border-[#0969da]"
+                    />
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    {filteredMosdot.map((m) => {
+                      const code = String(m.code);
+                      const checked = selectedMosdot.includes(code);
+                      return (
+                        <label
+                          key={code}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-[#f0f3f6] cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleMosad(code)}
+                            className="accent-[#0969da]"
+                          />
+                          <span className="text-xs font-mono text-[#0969da] w-12">{code}</span>
+                          <span className="text-sm text-[#1f2328] truncate">{m.name}</span>
+                        </label>
+                      );
+                    })}
+                    {filteredMosdot.length === 0 && (
+                      <div className="px-3 py-4 text-sm text-[#636c76] text-center">לא נמצאו מוסדות</div>
+                    )}
+                  </div>
+                  {selectedMosdot.length > 0 && (
+                    <div className="p-2 border-t border-[#d1d9e0]">
+                      <button
+                        onClick={() => setSelectedMosdot([])}
+                        className="text-xs text-[#cf222e] hover:text-[#ff7b7b]"
+                      >
+                        נקה בחירה
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* From חודש תחולה */}
+          <div>
+            <label className="block text-sm text-[#636c76] mb-2">מחודש תחולה</label>
+            <input
+              type="month"
+              value={fromTachula}
+              onChange={(e) => setFromTachula(e.target.value)}
+              className={`w-full bg-[#f0f3f6] border text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none ${
+                tachulaDateError ? 'border-[#cf222e] focus:border-[#cf222e]' : 'border-[#d1d9e0] focus:border-[#0969da]'
+              }`}
+            />
+          </div>
+
+          {/* To חודש תחולה */}
+          <div>
+            <label className="block text-sm text-[#636c76] mb-2">עד חודש תחולה</label>
+            <input
+              type="month"
+              value={toTachula}
+              onChange={(e) => setToTachula(e.target.value)}
+              className={`w-full bg-[#f0f3f6] border text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none ${
+                tachulaDateError ? 'border-[#cf222e] focus:border-[#cf222e]' : 'border-[#d1d9e0] focus:border-[#0969da]'
+              }`}
+            />
+            {tachulaDateError && (
+              <p className="mt-1 text-xs text-[#cf222e]">{tachulaDateError}</p>
+            )}
+          </div>
+        </div>
+
         {/* Extra collections row */}
         {availableCollections.length > 0 && (
           <div className="mt-4">
@@ -400,7 +597,7 @@ export default function ReportsPage() {
         <div className="mt-4 flex gap-3">
           <button
             onClick={handleSearch}
-            disabled={loading || !!dateError}
+            disabled={loading || !!dateError || !!tachulaDateError}
             className="px-5 py-2 bg-[#1f883d] hover:bg-[#1a7f37] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
           >
             {loading ? '⏳ מחפש...' : '🔍 חפש'}
@@ -410,11 +607,19 @@ export default function ReportsPage() {
               setSelectedTopics([]);
               setFromMonth('');
               setToMonth('');
+              setFromTachula('');
+              setToTachula('');
+              setSelectedMosdot([]);
               setResults({});
+              setExtraCollections(new Set());
+              try {
+                sessionStorage.removeItem(SESSION_REPORTS_META_KEY);
+                sessionStorage.removeItem(SESSION_REPORTS_DATA_KEY);
+              } catch { /* ignore */ }
             }}
             className="px-5 py-2 bg-[#f0f3f6] hover:bg-[#e2e7ec] border border-[#d1d9e0] text-[#1f2328] text-sm font-medium rounded-lg transition-colors"
           >
-            נקה
+            איפוס
           </button>
         </div>
 
@@ -425,6 +630,7 @@ export default function ReportsPage() {
 
       {/* Results */}
       {Object.keys(results).length > 0 && (
+        <>
         <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
           {/* Tab bar */}
           <div className="flex border-b border-[#d1d9e0] overflow-x-auto">
@@ -519,6 +725,7 @@ export default function ReportsPage() {
                 pagination={true}
                 paginationPageSize={50}
                 onGridReady={(p) => setGridApi(p.api)}
+                onFilterChanged={handleModelUpdated}
                 pinnedBottomRowData={reportsSummaryRow}
                 getRowStyle={(p) => p.node.rowPinned === 'bottom'
                   ? { fontWeight: 'bold', background: '#f0f3f6', color: '#0969da' }
@@ -527,6 +734,28 @@ export default function ReportsPage() {
             </div>
           )}
         </div>
+
+        {/* Sticky summary bar — visible when scrolling the page */}
+        {reportsSummaryRow.length > 0 && (
+          <div className="sticky bottom-0 z-20 bg-[#f0f3f6] border border-[#d1d9e0] border-t-2 border-t-[#0969da] px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-bold text-[#0969da] shadow-md overflow-x-auto">
+            {colDefs
+              .filter((col) => col.field && !hiddenCols.has(col.field as string))
+              .map((col) => {
+                const field = col.field as string;
+                const val = reportsSummaryRow[0]?.[field];
+                if (val == null || val === '') return null;
+                const display = typeof val === 'number'
+                  ? val.toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                  : String(val);
+                return (
+                  <span key={field} className="whitespace-nowrap">
+                    {typeof val === 'number' ? `${String(col.headerName ?? field)}: ${display}` : display}
+                  </span>
+                );
+              })}
+          </div>
+        )}
+        </>
       )}
 
       {Object.keys(results).length === 0 && !loading && (

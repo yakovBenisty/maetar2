@@ -305,7 +305,10 @@ export async function POST(req: NextRequest) {
         // עדכון השוואה - חלק בסיס
         compMap[code].baseTotal += sourceSum;
 
-        const tolerance = 1;
+        // התאמה מדויקת לחלוטין בין חשבונית לקולקשני הפירוט — אין יותר טולרנס
+        // של ₪1. שיורית קטנה (0.005) משמשת אך ורק נגד רעש floating-point,
+        // לא כסטייה כספית מותרת. נושא שלא תואם בדיוק נופל ל"לא התאים" ונדחה.
+        const tolerance = 0.005;
 
         if (Math.abs(hefresh - sourceSum) <= tolerance) {
           // התאמה מלאה
@@ -356,8 +359,8 @@ export async function POST(req: NextRequest) {
     // ─── השוואה ───────────────────────────────────────────────────────────────
     const comparison: ComparisonEntry[] = Object.entries(compMap).map(([code, c]) => {
       let matchType: 'base' | 'base+yadani' | 'none' = 'none';
-      if (Math.abs(c.invoiceTotal - c.baseTotal) <= 1) matchType = 'base';
-      else if (Math.abs(c.invoiceTotal - (c.baseTotal + c.yadaniTotal)) <= 1) matchType = 'base+yadani';
+      if (Math.abs(c.invoiceTotal - c.baseTotal) <= 0.005) matchType = 'base';
+      else if (Math.abs(c.invoiceTotal - (c.baseTotal + c.yadaniTotal)) <= 0.005) matchType = 'base+yadani';
       return { קוד_נושא: code, ...c, matched: matchType !== 'none', matchType };
     });
 
@@ -369,7 +372,8 @@ export async function POST(req: NextRequest) {
     const p1Amount     = period1Commands.reduce((s, c) => s + (c.סכום_זכות ?? 0) - Math.abs(c.סכום_חובה ?? 0), 0);
     const p2Amount     = period2Commands.reduce((s, c) => s + (c.סכום_זכות ?? 0) - Math.abs(c.סכום_חובה ?? 0), 0);
 
-    // שורת סיכום (חשבוניות כולל לכל תקופה)
+    // שורת איזון (חוז משרד החינוך) = סכום חשבוניות בפועל לתקופה — הכסף שהתקבל
+    // בפועל בחשבון הרשות. זהו המקור היחיד לערך השורה הזו, ללא חישוב/נגזרת.
     const p1InvoiceTotal = cheshbonit
       .filter((inv) => isBefore(inv['חודש_תחולה'] ?? null, splitDate))
       .reduce((s, inv) => s + Number(inv['יתרת_ביצוע_החודש'] ?? 0), 0);
@@ -377,22 +381,25 @@ export async function POST(req: NextRequest) {
       .filter((inv) => !isBefore(inv['חודש_תחולה'] ?? null, splitDate))
       .reduce((s, inv) => s + Number(inv['יתרת_ביצוע_החודש'] ?? 0), 0);
 
-    // שורת הסיכום לפי מבנה GS: [seif='7100001000', col_hova=invTotal, col_zhut='']
-    const summaryRow = (period: 'ראשונה' | 'שנייה', invTotal: number): CommandEntry => ({
-      run_id: runId,
-      calc_month: calcDate,
-      split_month: splitDate,
-      קוד_נושא: '',
-      שם_נושא: '',
-      table_type: 'סיכום',
-      תיאור: 'חוז משרד החינוך',
-      תאריך_ערך: valueDate,
-      סכום_חובה: invTotal,
-      seif_hova: '7100001000',
-      seif_zhut: null,
-      תקופה: period,
-      created_at: new Date(),
-    });
+    const summaryRow = (period: 'ראשונה' | 'שנייה', invTotal: number): CommandEntry => {
+      const amount = Math.abs(invTotal);
+      const isDebit = invTotal >= 0;
+      return {
+        run_id: runId,
+        calc_month: calcDate,
+        split_month: splitDate,
+        קוד_נושא: '',
+        שם_נושא: '',
+        table_type: 'סיכום',
+        תיאור: 'חוז משרד החינוך',
+        תאריך_ערך: valueDate,
+        ...(isDebit ? { סכום_חובה: amount } : { סכום_זכות: amount }),
+        seif_hova: isDebit ? '7100001000' : null,
+        seif_zhut: isDebit ? null : '7100001000',
+        תקופה: period,
+        created_at: new Date(),
+      };
+    };
 
     const p1SummaryRow = p1InvoiceTotal !== 0 ? summaryRow('ראשונה', p1InvoiceTotal) : null;
     const p2SummaryRow = p2InvoiceTotal !== 0 ? summaryRow('שנייה', p2InvoiceTotal) : null;

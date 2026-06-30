@@ -18,6 +18,8 @@ const navItems: NavItem[] = [
   { href: '/prepare', label: 'הכנת פקודה', icon: '⚙️' },
   { href: '/runs', label: 'היסטוריית ריצות', icon: '📋' },
   { href: '/reports', label: 'דוחות', icon: '📈' },
+  { href: '/mapping', label: 'מיפוי נושאים', icon: '🗂️' },
+  { href: '/audit',   label: 'דוח בקרה',    icon: '🔍' },
   { href: '/noseme', label: 'נושאים', icon: '🏷️' },
   { href: '/mosdot', label: 'מוסדות', icon: '🏫' },
   { href: '/users', label: 'משתמשים', icon: '👥', adminOnly: true },
