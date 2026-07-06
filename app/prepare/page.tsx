@@ -285,7 +285,9 @@ export default function PreparePage() {
         const s = JSON.parse(meta);
         if (s.calcMonth)  setCalcMonth(s.calcMonth);
         if (s.splitMonth) setSplitMonth(s.splitMonth);
-        if (s.valueDate)  setValueDate(s.valueDate);
+        // Only restore valueDate if it's a valid YYYY-MM-DD date
+        if (s.valueDate && /^\d{4}-\d{2}-\d{2}$/.test(s.valueDate) && !isNaN(Date.parse(s.valueDate)))
+          setValueDate(s.valueDate);
         if (s.phase)      setPhase(s.phase);
         if (s.resultTab)  setResultTab(s.resultTab);
       }
@@ -380,10 +382,13 @@ export default function PreparePage() {
   }, []);
 
   const handleProcess = useCallback(async () => {
-    if (!calcMonth || !splitMonth || !valueDate) {
+    if (!calcMonth && !splitMonth && !valueDate) {
       setErrorMsg('יש לבחור חודש חישוב, חודש פיצול ותאריך ערך');
       return;
     }
+    if (!calcMonth) { setErrorMsg('יש לבחור חודש חישוב'); return; }
+    if (!splitMonth) { setErrorMsg('יש לבחור חודש פיצול'); return; }
+    if (!valueDate) { setErrorMsg('יש להזין תאריך ערך תקין'); return; }
     setProcessing(true);
     setErrorMsg('');
     try {
@@ -460,10 +465,13 @@ export default function PreparePage() {
                 <input
                   type="date"
                   value={valueDate}
-                  onChange={(e) => setValueDate(e.target.value)}
-                  className="w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]"
+                  onChange={(e) => { if (e.target.value) setValueDate(e.target.value) }}
+                  className={`w-full bg-[#f0f3f6] border text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da] ${!valueDate ? 'border-[#cf222e]' : 'border-[#d1d9e0]'}`}
                 />
-                <p className="text-xs text-[#636c76] mt-1">ברירת מחדל: סוף החודש הנוכחי</p>
+                {!valueDate
+                  ? <p className="text-xs text-[#cf222e] mt-1">תאריך לא תקין — יש לבחור תאריך</p>
+                  : <p className="text-xs text-[#636c76] mt-1">ברירת מחדל: סוף החודש הנוכחי</p>
+                }
               </div>
             </div>
           </div>
