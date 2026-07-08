@@ -365,9 +365,13 @@ export default function RikhuzPage() {
   const colDefs = useMemo((): ColDef[] => {
     const defs = COL_DEFS[activeTab] ?? DEFAULT_COL_DEF_LIST
     if (activeRows.length > 0) {
-      const knownFields = new Set(defs.map(d => d.field))
+      const dataFields = new Set(Object.keys(activeRows[0]))
+      // Keep only predefined cols that actually exist in the data
+      const filtered = defs.filter(d => !d.field || dataFields.has(d.field))
+      // Add any extra fields from data not covered by predefined defs
+      const knownFields = new Set(filtered.map(d => d.field))
       const extra = Object.keys(activeRows[0]).filter(f => !knownFields.has(f))
-      return [...defs, ...extra.map(f => ({ field: f, headerName: f, minWidth: 110 }))]
+      return [...filtered, ...extra.map(f => ({ field: f, headerName: f, minWidth: 110 }))]
     }
     return defs
   }, [activeTab, activeRows])
