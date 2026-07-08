@@ -363,17 +363,16 @@ export default function RikhuzPage() {
   const numericFields = NUMERIC_FIELDS[activeTab] ?? []
 
   const colDefs = useMemo((): ColDef[] => {
-    const defs = COL_DEFS[activeTab] ?? DEFAULT_COL_DEF_LIST
-    if (activeRows.length > 0) {
-      const dataFields = new Set(Object.keys(activeRows[0]))
-      // Keep only predefined cols that actually exist in the data
-      const filtered = defs.filter(d => !d.field || dataFields.has(d.field))
-      // Add any extra fields from data not covered by predefined defs
-      const knownFields = new Set(filtered.map(d => d.field))
-      const extra = Object.keys(activeRows[0]).filter(f => !knownFields.has(f))
-      return [...filtered, ...extra.map(f => ({ field: f, headerName: f, minWidth: 110 }))]
+    if (activeRows.length === 0) return COL_DEFS[activeTab] ?? DEFAULT_COL_DEF_LIST
+    // Build a lookup of formatting hints from the preset defs
+    const defLookup = new Map<string, ColDef>()
+    for (const d of [...(COL_DEFS[activeTab] ?? []), ...DEFAULT_COL_DEF_LIST]) {
+      if (d.field) defLookup.set(d.field, d)
     }
-    return defs
+    // Columns derived entirely from what the data actually contains
+    return Object.keys(activeRows[0]).map(f =>
+      defLookup.get(f) ?? { field: f, headerName: f, minWidth: 110 }
+    )
   }, [activeTab, activeRows])
 
   // Map field → headerName for display in grand total bar
