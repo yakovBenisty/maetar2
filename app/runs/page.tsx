@@ -10,6 +10,7 @@ import {
   useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
   footerRowStyle, footerRowHeight,
 } from '@/app/components/tableSummary';
+import { useColumnVisibility, ColumnPickerButton } from '@/app/components/columnPicker';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -116,6 +117,14 @@ export default function RunsPage() {
     []
   );
 
+  const { visible: visibleFields, toggle: toggleColumn, showAll: showAllColumns, resetToDefault: resetColumns } =
+    useColumnVisibility(footerFields);
+
+  const displayedColDefs = useMemo(
+    () => colDefsWithFooter.filter(c => !c.field || visibleFields.has(String(c.field))),
+    [colDefsWithFooter, visibleFields]
+  );
+
   useEffect(() => {
     fetch('/api/runs')
       .then((r) => r.json())
@@ -177,6 +186,13 @@ export default function RunsPage() {
             >
               🔄 רענן
             </button>
+            <ColumnPickerButton
+              columns={summaryColumns}
+              visible={visibleFields}
+              onToggle={toggleColumn}
+              onShowAll={showAllColumns}
+              onReset={resetColumns}
+            />
           </div>
         </div>
 
@@ -191,7 +207,7 @@ export default function RunsPage() {
               <AgGridReact<RunRecord>
                 theme="legacy"
                 rowData={runs}
-                columnDefs={colDefsWithFooter}
+                columnDefs={displayedColDefs}
                 enableRtl={true}
                 defaultColDef={{ sortable: true, resizable: true, filter: true }}
                 pagination={true}

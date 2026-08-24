@@ -10,6 +10,7 @@ import {
   useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
   footerRowStyle, footerRowHeight,
 } from '@/app/components/tableSummary';
+import { useColumnVisibility, ColumnPickerButton } from '@/app/components/columnPicker';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -374,6 +375,23 @@ export default function PreparePage() {
   const logsSummaryRow     = useMemo(() => buildFooterRow(logsRows, logFooterFields, getLogAgg),               [logsRows, getLogAgg]);
   const rejectedSummaryRow = useMemo(() => buildFooterRow(rejectedRows, rejectedFooterFields, getRejAgg),      [rejectedRows, getRejAgg]);
 
+  const commandCols = useColumnVisibility(commandFooterFields);
+  const logCols = useColumnVisibility(logFooterFields);
+  const rejectedCols = useColumnVisibility(rejectedFooterFields);
+
+  const commandColDefsDisplayed = useMemo(
+    () => commandColDefsFooter.filter(c => !c.field || commandCols.visible.has(String(c.field))),
+    [commandColDefsFooter, commandCols.visible]
+  );
+  const logColDefsDisplayed = useMemo(
+    () => logColDefsFooter.filter(c => !c.field || logCols.visible.has(String(c.field))),
+    [logColDefsFooter, logCols.visible]
+  );
+  const rejectedColDefsDisplayed = useMemo(
+    () => rejectedColDefsFooter.filter(c => !c.field || rejectedCols.visible.has(String(c.field))),
+    [rejectedColDefsFooter, rejectedCols.visible]
+  );
+
   const handleRestore = useCallback(async (runId: string) => {
     setRestoringId(runId);
     setErrorMsg('');
@@ -696,7 +714,7 @@ export default function PreparePage() {
 
               {resultTab === 'period1' && (
                 <>
-                  <div className="flex justify-end mb-2">
+                  <div className="flex justify-end mb-2 gap-2">
                     <button
                       onClick={() => exportToCsv('פקודות_תקופה_ראשונה', COMMAND_CSV_COLS, (result.tabs?.period1 ?? []) as Record<string, unknown>[])}
                       disabled={(result.tabs?.period1?.length ?? 0) === 0}
@@ -704,13 +722,20 @@ export default function PreparePage() {
                     >
                       📤 יצוא CSV
                     </button>
+                    <ColumnPickerButton
+                      columns={commandSummaryColumns}
+                      visible={commandCols.visible}
+                      onToggle={commandCols.toggle}
+                      onShowAll={commandCols.showAll}
+                      onReset={commandCols.resetToDefault}
+                    />
                   </div>
                   <TableSummaryBar rows={(result.tabs?.period1 ?? []) as Record<string, unknown>[]} columns={commandSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.period1 ?? []}
-                      columnDefs={commandColDefsFooter}
+                      columnDefs={commandColDefsDisplayed}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setP1Api(p.api)}
@@ -725,7 +750,7 @@ export default function PreparePage() {
 
               {resultTab === 'period2' && (
                 <>
-                  <div className="flex justify-end mb-2">
+                  <div className="flex justify-end mb-2 gap-2">
                     <button
                       onClick={() => exportToCsv('פקודות_תקופה_שניה', COMMAND_CSV_COLS, (result.tabs?.period2 ?? []) as Record<string, unknown>[])}
                       disabled={(result.tabs?.period2?.length ?? 0) === 0}
@@ -733,13 +758,20 @@ export default function PreparePage() {
                     >
                       📤 יצוא CSV
                     </button>
+                    <ColumnPickerButton
+                      columns={commandSummaryColumns}
+                      visible={commandCols.visible}
+                      onToggle={commandCols.toggle}
+                      onShowAll={commandCols.showAll}
+                      onReset={commandCols.resetToDefault}
+                    />
                   </div>
                   <TableSummaryBar rows={(result.tabs?.period2 ?? []) as Record<string, unknown>[]} columns={commandSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.period2 ?? []}
-                      columnDefs={commandColDefsFooter}
+                      columnDefs={commandColDefsDisplayed}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setP2Api(p.api)}
@@ -754,7 +786,7 @@ export default function PreparePage() {
 
               {resultTab === 'logs' && (
                 <>
-                  <div className="flex justify-end mb-2">
+                  <div className="flex justify-end mb-2 gap-2">
                     <button
                       onClick={() => exportToCsv('לוג_שגיאות', LOG_CSV_COLS, (result.tabs?.logs ?? []) as Record<string, unknown>[])}
                       disabled={(result.tabs?.logs?.length ?? 0) === 0}
@@ -762,13 +794,20 @@ export default function PreparePage() {
                     >
                       📤 יצוא CSV
                     </button>
+                    <ColumnPickerButton
+                      columns={logSummaryColumns}
+                      visible={logCols.visible}
+                      onToggle={logCols.toggle}
+                      onShowAll={logCols.showAll}
+                      onReset={logCols.resetToDefault}
+                    />
                   </div>
                   <TableSummaryBar rows={(result.tabs?.logs ?? []) as Record<string, unknown>[]} columns={logSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.logs ?? []}
-                      columnDefs={logColDefsFooter}
+                      columnDefs={logColDefsDisplayed}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setLogsApi(p.api)}
@@ -783,7 +822,7 @@ export default function PreparePage() {
 
 {resultTab === 'rejected' && (
                 <>
-                  <div className="flex justify-end mb-2">
+                  <div className="flex justify-end mb-2 gap-2">
                     <button
                       onClick={() => exportToCsv('לא_נקלטו', REJECTED_CSV_COLS, (result.tabs?.rejected ?? []) as Record<string, unknown>[])}
                       disabled={(result.tabs?.rejected?.length ?? 0) === 0}
@@ -791,13 +830,20 @@ export default function PreparePage() {
                     >
                       📤 יצוא CSV
                     </button>
+                    <ColumnPickerButton
+                      columns={rejectedSummaryColumns}
+                      visible={rejectedCols.visible}
+                      onToggle={rejectedCols.toggle}
+                      onShowAll={rejectedCols.showAll}
+                      onReset={rejectedCols.resetToDefault}
+                    />
                   </div>
                   <TableSummaryBar rows={(result.tabs?.rejected ?? []) as Record<string, unknown>[]} columns={rejectedSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.rejected ?? []}
-                      columnDefs={rejectedColDefsFooter}
+                      columnDefs={rejectedColDefsDisplayed}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setRejectedApi(p.api)}

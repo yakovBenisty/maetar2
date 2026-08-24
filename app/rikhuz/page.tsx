@@ -9,6 +9,7 @@ import {
   useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
   footerRowStyle, footerRowHeight,
 } from '@/app/components/tableSummary'
+import { useColumnVisibility, ColumnPickerButton, RIKHUZ_DEFAULT_ALIAS_GROUPS } from '@/app/components/columnPicker'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -382,6 +383,14 @@ export default function RikhuzPage() {
     [colDefs, activeRows, getAggType, setAggType]
   )
 
+  const { visible: visibleFields, toggle: toggleColumn, showAll: showAllColumns, resetToDefault: resetColumns } =
+    useColumnVisibility(footerFields, RIKHUZ_DEFAULT_ALIAS_GROUPS)
+
+  const displayedColDefs = useMemo(
+    () => colDefsWithFooter.filter(c => !c.field || visibleFields.has(c.field as string)),
+    [colDefsWithFooter, visibleFields]
+  )
+
   // Pinned bottom row — per-column aggregation of the currently filtered rows
   const pinnedBottomRow = useMemo(
     () => buildFooterRow(filteredRows, footerFields, getAggType),
@@ -568,6 +577,13 @@ export default function RikhuzPage() {
               >
                 📊 יצוא Excel
               </button>
+              <ColumnPickerButton
+                columns={summaryColumns}
+                visible={visibleFields}
+                onToggle={toggleColumn}
+                onShowAll={showAllColumns}
+                onReset={resetColumns}
+              />
             </div>
           </div>
 
@@ -576,7 +592,7 @@ export default function RikhuzPage() {
             <AgGridReact
               key={activeTab}
               rowData={activeRows}
-              columnDefs={colDefsWithFooter}
+              columnDefs={displayedColDefs}
               pinnedBottomRowData={pinnedBottomRow}
               enableRtl
               theme="legacy"
