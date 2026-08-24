@@ -5,6 +5,10 @@ import { AgGridReact } from 'ag-grid-react'
 import { ModuleRegistry, AllCommunityModule, ColDef } from 'ag-grid-community'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
+import {
+  useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
+  footerRowStyle, footerRowHeight,
+} from '@/app/components/tableSummary'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -23,26 +27,12 @@ const STD_COLLECTIONS = [
   { key: 'COMMANDS',   label: 'פקודות' },
 ]
 
-// ─── Numeric fields per collection (for totals) ───────────────────────────────
-
-const NUMERIC_FIELDS: Record<string, string[]> = {
-  CHESHBONIT: ['ביצוע_חודש_נוכחי', 'יתרת_ביצוע_החודש'],
-  MUCARIM:    ['כמות', 'הפרש_מחושב'],
-  SHARATIM:   ['כמות', 'הפרש_מחושב'],
-  YADANIIM:   ['סכום'],
-  COMMANDS:   ['סכום_חובה', 'סכום_זכות'],
-}
-
 // ─── Number formatter ─────────────────────────────────────────────────────────
 
 function fmtNum(v: unknown): string {
   const n = Number(v)
   if (v == null || v === '' || isNaN(n)) return ''
   return n.toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-}
-
-function sumField(rows: Record<string, unknown>[], field: string): number {
-  return rows.reduce((s, r) => s + (isNaN(Number(r[field])) ? 0 : Number(r[field])), 0)
 }
 
 // ─── Column defs ──────────────────────────────────────────────────────────────
@@ -367,8 +357,6 @@ export default function RikhuzPage() {
 
   // ── Totals ─────────────────────────────────────────────────────────────────
 
-  const numericFields = NUMERIC_FIELDS[activeTab] ?? []
-
   const colDefs = useMemo((): ColDef[] => {
     if (activeRows.length === 0) return COL_DEFS[activeTab] ?? DEFAULT_COL_DEF_LIST
     // Build a lookup of formatting hints from the preset defs
@@ -382,31 +370,30 @@ export default function RikhuzPage() {
     )
   }, [activeTab, activeRows])
 
-  // Map field → headerName for display in grand total bar
-  const fieldToHeader = useMemo(() => {
-    const map: Record<string, string> = {}
-    for (const cd of colDefs) {
-      if (cd.field) map[cd.field] = cd.headerName ?? cd.field
-    }
-    return map
-  }, [colDefs])
+  const footerFields = useMemo(
+    () => colDefs.map(c => c.field).filter((f): f is string => !!f),
+    [colDefs]
+  )
 
-  const grandTotal = useMemo(() => {
-    const t: Record<string, number> = {}
-    for (const f of numericFields) t[f] = sumField(activeRows, f)
-    return t
-  }, [activeRows, numericFields])
+  const { getAggType, setAggType } = useColumnAggTypes(activeRows)
 
-  // Pinned bottom row — sum of filtered rows
-  const pinnedBottomRow = useMemo((): Record<string, unknown>[] => {
-    if (filteredRows.length === 0 && activeRows.length === 0) return []
-    const firstField = colDefs[0]?.field ?? 'חודש_חישוב'
-    const row: Record<string, unknown> = {
-      [firstField]: `סה"כ מוצג — ${filteredRows.length.toLocaleString()} רשומות`,
-    }
-    for (const f of numericFields) row[f] = sumField(filteredRows, f)
-    return [row]
-  }, [filteredRows, numericFields, colDefs, activeRows.length])
+  const colDefsWithFooter = useMemo(
+    () => withFooterCells(colDefs, activeRows, getAggType, setAggType),
+    [colDefs, activeRows, getAggType, setAggType]
+  )
+
+  // Pinned bottom row — per-column aggregation of the currently filtered rows
+  const pinnedBottomRow = useMemo(
+    () => buildFooterRow(filteredRows, footerFields, getAggType),
+    [filteredRows, footerFields, getAggType]
+  )
+
+  const summaryColumns = useMemo(
+    () => colDefs
+      .filter((c): c is ColDef & { field: string } => !!c.field)
+      .map(c => ({ field: c.field, headerName: c.headerName })),
+    [colDefs]
+  )
 
   const onFilterChanged = useCallback((p: { api: { forEachNodeAfterFilter: (cb: (n: { data?: unknown }) => void) => void } }) => {
     const rows: Record<string, unknown>[] = []
@@ -559,19 +546,7 @@ export default function RikhuzPage() {
           </div>
 
           {/* Grand total bar */}
-          {numericFields.length > 0 && activeRows.length > 0 && (
-            <div className="px-4 py-3 bg-[#f0f6ff] border-b border-[#b6d4fb] flex flex-wrap items-center gap-x-6 gap-y-1.5">
-              <span className="text-xs font-bold text-[#0969da] shrink-0">
-                סה&quot;כ כולל — {activeRows.length.toLocaleString()} רשומות
-              </span>
-              {numericFields.map(f => (
-                <div key={f} className="flex items-center gap-1.5">
-                  <span className="text-xs text-[#636c76]">{fieldToHeader[f] ?? f}:</span>
-                  <span className="text-sm font-bold text-[#1f2328]">{fmtNum(grandTotal[f])}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          <TableSummaryBar rows={activeRows} columns={summaryColumns} />
 
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#d1d9e0] bg-[#f6f8fa]">
@@ -601,7 +576,7 @@ export default function RikhuzPage() {
             <AgGridReact
               key={activeTab}
               rowData={activeRows}
-              columnDefs={colDefs}
+              columnDefs={colDefsWithFooter}
               pinnedBottomRowData={pinnedBottomRow}
               enableRtl
               theme="legacy"
@@ -612,10 +587,8 @@ export default function RikhuzPage() {
                 setFilteredRows(activeRows)
               }}
               onGridSizeChanged={p => p.api.sizeColumnsToFit()}
-              getRowStyle={(p: any): any => {
-                if (p.node.rowPinned === 'bottom')
-                  return { background: '#e8f3ff', fontWeight: '700', borderTop: '2px solid #b6d4fb', color: '#0550ae' }
-              }}
+              getRowStyle={footerRowStyle}
+              getRowHeight={footerRowHeight}
             />
           </div>
         </div>

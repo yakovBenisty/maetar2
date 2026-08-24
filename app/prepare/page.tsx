@@ -6,6 +6,10 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
+import {
+  useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
+  footerRowStyle, footerRowHeight,
+} from '@/app/components/tableSummary';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -215,34 +219,19 @@ const rejectedColDefs: ColDef[] = [
   { field: 'reason', headerName: 'סיבה', flex: 1, minWidth: 200 },
 ];
 
-function buildCommandSummaryRow(rows: Record<string, unknown>[]) {
-  if (rows.length === 0) return [];
-  return [{
-    תיאור: `סה"כ: ${rows.length.toLocaleString('he-IL')} שורות`,
-    סכום_חובה: rows.reduce((s, r) => s + (Number(r['סכום_חובה']) || 0), 0),
-    סכום_זכות: rows.reduce((s, r) => s + (Number(r['סכום_זכות']) || 0), 0),
-  }];
-}
+const commandFooterFields = commandColDefs.map(c => c.field).filter(Boolean).map(f => String(f));
+const logFooterFields = logColDefs.map(c => c.field).filter(Boolean).map(f => String(f));
+const rejectedFooterFields = rejectedColDefs.map(c => c.field).filter(Boolean).map(f => String(f));
 
-function buildLogSummaryRow(rows: Record<string, unknown>[]) {
-  if (rows.length === 0) return [];
-  const errors   = rows.filter(r => r['type'] === 'error').length;
-  const warnings = rows.filter(r => r['type'] === 'warning').length;
-  return [{
-    type: 'סה"כ',
-    message: `${rows.length.toLocaleString('he-IL')} שורות · ${errors} שגיאות · ${warnings} אזהרות`,
-  }];
-}
-
-function buildRejectedSummaryRow(rows: Record<string, unknown>[]) {
-  if (rows.length === 0) return [];
-  return [{ קוד_נושא: `סה"כ: ${rows.length.toLocaleString('he-IL')} שורות` }];
-}
-
-const PINNED_ROW_STYLE = (p: { node: { rowPinned?: string | null } }) =>
-  p.node.rowPinned === 'bottom'
-    ? { fontWeight: 'bold', background: '#f0f3f6', color: '#0969da' }
-    : undefined;
+const commandSummaryColumns = commandColDefs
+  .filter(c => !!c.field)
+  .map(c => ({ field: String(c.field), headerName: c.headerName }));
+const logSummaryColumns = logColDefs
+  .filter(c => !!c.field)
+  .map(c => ({ field: String(c.field), headerName: c.headerName }));
+const rejectedSummaryColumns = rejectedColDefs
+  .filter(c => !!c.field)
+  .map(c => ({ field: String(c.field), headerName: c.headerName }));
 
 function lastDayOfCurrentMonth(): string {
   const now = new Date();
@@ -356,10 +345,34 @@ export default function PreparePage() {
       .catch(() => {});
   }, []);
 
-  const p1SummaryRow       = useMemo(() => buildCommandSummaryRow(p1Rows),       [p1Rows]);
-  const p2SummaryRow       = useMemo(() => buildCommandSummaryRow(p2Rows),       [p2Rows]);
-  const logsSummaryRow     = useMemo(() => buildLogSummaryRow(logsRows),         [logsRows]);
-  const rejectedSummaryRow = useMemo(() => buildRejectedSummaryRow(rejectedRows),[rejectedRows]);
+  const commandSampleRows = useMemo(
+    () => [...(result?.tabs?.period1 ?? []), ...(result?.tabs?.period2 ?? [])] as Record<string, unknown>[],
+    [result]
+  );
+  const { getAggType: getCmdAgg, setAggType: setCmdAgg } = useColumnAggTypes(commandSampleRows);
+  const commandColDefsFooter = useMemo(
+    () => withFooterCells(commandColDefs, commandSampleRows, getCmdAgg, setCmdAgg),
+    [commandSampleRows, getCmdAgg, setCmdAgg]
+  );
+
+  const logSampleRows = useMemo(() => (result?.tabs?.logs ?? []) as Record<string, unknown>[], [result]);
+  const { getAggType: getLogAgg, setAggType: setLogAgg } = useColumnAggTypes(logSampleRows);
+  const logColDefsFooter = useMemo(
+    () => withFooterCells(logColDefs, logSampleRows, getLogAgg, setLogAgg),
+    [logSampleRows, getLogAgg, setLogAgg]
+  );
+
+  const rejectedSampleRows = useMemo(() => (result?.tabs?.rejected ?? []) as Record<string, unknown>[], [result]);
+  const { getAggType: getRejAgg, setAggType: setRejAgg } = useColumnAggTypes(rejectedSampleRows);
+  const rejectedColDefsFooter = useMemo(
+    () => withFooterCells(rejectedColDefs, rejectedSampleRows, getRejAgg, setRejAgg),
+    [rejectedSampleRows, getRejAgg, setRejAgg]
+  );
+
+  const p1SummaryRow       = useMemo(() => buildFooterRow(p1Rows, commandFooterFields, getCmdAgg),             [p1Rows, getCmdAgg]);
+  const p2SummaryRow       = useMemo(() => buildFooterRow(p2Rows, commandFooterFields, getCmdAgg),             [p2Rows, getCmdAgg]);
+  const logsSummaryRow     = useMemo(() => buildFooterRow(logsRows, logFooterFields, getLogAgg),               [logsRows, getLogAgg]);
+  const rejectedSummaryRow = useMemo(() => buildFooterRow(rejectedRows, rejectedFooterFields, getRejAgg),      [rejectedRows, getRejAgg]);
 
   const handleRestore = useCallback(async (runId: string) => {
     setRestoringId(runId);
@@ -692,17 +705,19 @@ export default function PreparePage() {
                       📤 יצוא CSV
                     </button>
                   </div>
+                  <TableSummaryBar rows={(result.tabs?.period1 ?? []) as Record<string, unknown>[]} columns={commandSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.period1 ?? []}
-                      columnDefs={commandColDefs}
+                      columnDefs={commandColDefsFooter}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setP1Api(p.api)}
                       onFilterChanged={handleP1ModelUpdated}
                       pinnedBottomRowData={p1SummaryRow}
-                      getRowStyle={PINNED_ROW_STYLE}
+                      getRowStyle={footerRowStyle}
+                      getRowHeight={footerRowHeight}
                     />
                   </div>
                 </>
@@ -719,17 +734,19 @@ export default function PreparePage() {
                       📤 יצוא CSV
                     </button>
                   </div>
+                  <TableSummaryBar rows={(result.tabs?.period2 ?? []) as Record<string, unknown>[]} columns={commandSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.period2 ?? []}
-                      columnDefs={commandColDefs}
+                      columnDefs={commandColDefsFooter}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setP2Api(p.api)}
                       onFilterChanged={handleP2ModelUpdated}
                       pinnedBottomRowData={p2SummaryRow}
-                      getRowStyle={PINNED_ROW_STYLE}
+                      getRowStyle={footerRowStyle}
+                      getRowHeight={footerRowHeight}
                     />
                   </div>
                 </>
@@ -746,17 +763,19 @@ export default function PreparePage() {
                       📤 יצוא CSV
                     </button>
                   </div>
+                  <TableSummaryBar rows={(result.tabs?.logs ?? []) as Record<string, unknown>[]} columns={logSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.logs ?? []}
-                      columnDefs={logColDefs}
+                      columnDefs={logColDefsFooter}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setLogsApi(p.api)}
                       onFilterChanged={handleLogsModelUpdated}
                       pinnedBottomRowData={logsSummaryRow}
-                      getRowStyle={PINNED_ROW_STYLE}
+                      getRowStyle={footerRowStyle}
+                      getRowHeight={footerRowHeight}
                     />
                   </div>
                 </>
@@ -773,50 +792,25 @@ export default function PreparePage() {
                       📤 יצוא CSV
                     </button>
                   </div>
+                  <TableSummaryBar rows={(result.tabs?.rejected ?? []) as Record<string, unknown>[]} columns={rejectedSummaryColumns} recordLabel="שורות" />
                   <div className="ag-theme-alpine" style={{ height: 500 }}>
                     <AgGridReact
                       theme="legacy"
                       rowData={result.tabs?.rejected ?? []}
-                      columnDefs={rejectedColDefs}
+                      columnDefs={rejectedColDefsFooter}
                       enableRtl={true}
                       defaultColDef={{ sortable: true, resizable: true, filter: true }}
                       onGridReady={(p) => setRejectedApi(p.api)}
                       onFilterChanged={handleRejectedModelUpdated}
                       pinnedBottomRowData={rejectedSummaryRow}
-                      getRowStyle={PINNED_ROW_STYLE}
+                      getRowStyle={footerRowStyle}
+                      getRowHeight={footerRowHeight}
                     />
                   </div>
                 </>
               )}
             </div>
           </div>
-
-          {/* Sticky summary bars — outside overflow-hidden, visible when scrolling the page */}
-          {resultTab === 'period1' && p1SummaryRow.length > 0 && (
-            <div className="sticky bottom-0 z-20 bg-[#f0f3f6] border border-[#d1d9e0] border-t-2 border-t-[#0969da] px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-bold text-[#0969da] shadow-md">
-              <span>{String(p1SummaryRow[0].תיאור ?? '')}</span>
-              {p1SummaryRow[0].סכום_חובה != null && <span>חובה: {Number(p1SummaryRow[0].סכום_חובה).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>}
-              {p1SummaryRow[0].סכום_זכות != null && <span>זכות: {Number(p1SummaryRow[0].סכום_זכות).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>}
-            </div>
-          )}
-          {resultTab === 'period2' && p2SummaryRow.length > 0 && (
-            <div className="sticky bottom-0 z-20 bg-[#f0f3f6] border border-[#d1d9e0] border-t-2 border-t-[#0969da] px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-bold text-[#0969da] shadow-md">
-              <span>{String(p2SummaryRow[0].תיאור ?? '')}</span>
-              {p2SummaryRow[0].סכום_חובה != null && <span>חובה: {Number(p2SummaryRow[0].סכום_חובה).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>}
-              {p2SummaryRow[0].סכום_זכות != null && <span>זכות: {Number(p2SummaryRow[0].סכום_זכות).toLocaleString('he-IL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>}
-            </div>
-          )}
-          {resultTab === 'logs' && logsSummaryRow.length > 0 && (
-            <div className="sticky bottom-0 z-20 bg-[#f0f3f6] border border-[#d1d9e0] border-t-2 border-t-[#0969da] px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-bold text-[#0969da] shadow-md">
-              <span>{String(logsSummaryRow[0].type ?? '')}</span>
-              <span>{String(logsSummaryRow[0].message ?? '')}</span>
-            </div>
-          )}
-          {resultTab === 'rejected' && rejectedSummaryRow.length > 0 && (
-            <div className="sticky bottom-0 z-20 bg-[#f0f3f6] border border-[#d1d9e0] border-t-2 border-t-[#0969da] px-4 py-2.5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-bold text-[#0969da] shadow-md">
-              <span>{String(rejectedSummaryRow[0].קוד_נושא ?? '')}</span>
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -7,6 +7,10 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
+import {
+  useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
+  footerRowStyle, footerRowHeight,
+} from '@/app/components/tableSummary';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -282,13 +286,41 @@ export default function NosemePage() {
     e.target.value = '';
   }, [loadData]);
 
-  const nosemeSummaryRow = useMemo<NosemeRecord[]>(() => [{
-    code: `סה"כ: ${rows.length} רשומות`,
-    name: '', table_type: '', direction: '', seif: '', mosad_col_name: '', seif_zhut: '', seif_hova: '',
-  }], [rows]);
+  const [filteredRows, setFilteredRows] = useState<NosemeRecord[]>([]);
+  useEffect(() => setFilteredRows(rows), [rows]);
+
+  const onFilterChanged = useCallback((p: { api: GridApi<NosemeRecord> }) => {
+    const next: NosemeRecord[] = [];
+    p.api.forEachNodeAfterFilter(node => { if (node.data) next.push(node.data); });
+    setFilteredRows(next);
+  }, []);
+
+  const footerFields = useMemo(
+    () => columnDefs.map(c => c.field).filter(Boolean).map(f => String(f)),
+    []
+  );
+
+  const { getAggType, setAggType } = useColumnAggTypes(rows as unknown as Record<string, unknown>[]);
+
+  const dataColDefs = useMemo(
+    () => withFooterCells(columnDefs, rows as unknown as Record<string, unknown>[], getAggType, setAggType),
+    [rows, getAggType, setAggType]
+  );
+
+  const nosemeSummaryRow = useMemo(
+    () => buildFooterRow(filteredRows as unknown as Record<string, unknown>[], footerFields, getAggType),
+    [filteredRows, footerFields, getAggType]
+  );
+
+  const summaryColumns = useMemo(
+    () => columnDefs
+      .filter(c => !!c.field)
+      .map(c => ({ field: String(c.field), headerName: c.headerName })),
+    []
+  );
 
   const colDefsWithActions = useMemo<ColDef<NosemeRecord>[]>(() => [
-    ...columnDefs,
+    ...dataColDefs,
     {
       headerName: 'פעולות',
       width: 140,
@@ -316,7 +348,7 @@ export default function NosemePage() {
         }
       },
     },
-  ], [rows, handleEdit, handleDelete]);
+  ], [dataColDefs, rows, handleEdit, handleDelete]);
 
   return (
     <div>
@@ -551,22 +583,25 @@ export default function NosemePage() {
         {loading ? (
           <div className="flex items-center justify-center h-64 text-[#636c76]">טוען...</div>
         ) : (
-          <div className="ag-theme-alpine" style={{ height: 550 }}>
-            <AgGridReact<NosemeRecord>
-              theme="legacy"
-              rowData={rows}
-              columnDefs={colDefsWithActions}
-              enableRtl={true}
-              defaultColDef={{ sortable: true, resizable: true, filter: true }}
-              pagination={true}
-              paginationPageSize={25}
-              onGridReady={(p) => setGridApi(p.api)}
-              pinnedBottomRowData={nosemeSummaryRow}
-              getRowStyle={(p) => p.node.rowPinned === 'bottom'
-                ? { fontWeight: 'bold', background: '#f0f3f6', color: '#0969da' }
-                : undefined}
-            />
-          </div>
+          <>
+            <TableSummaryBar rows={rows as unknown as Record<string, unknown>[]} columns={summaryColumns} />
+            <div className="ag-theme-alpine" style={{ height: 550 }}>
+              <AgGridReact<NosemeRecord>
+                theme="legacy"
+                rowData={rows}
+                columnDefs={colDefsWithActions}
+                enableRtl={true}
+                defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                pagination={true}
+                paginationPageSize={25}
+                onGridReady={(p) => setGridApi(p.api)}
+                onFilterChanged={onFilterChanged}
+                pinnedBottomRowData={nosemeSummaryRow}
+                getRowStyle={footerRowStyle}
+                getRowHeight={footerRowHeight}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

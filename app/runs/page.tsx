@@ -1,11 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { exportToCsv } from '@/app/components/exportCsv';
 import { AgGridReact } from 'ag-grid-react';
-import { ModuleRegistry, AllCommunityModule, ColDef } from 'ag-grid-community';
+import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
+import {
+  useColumnAggTypes, withFooterCells, buildFooterRow, TableSummaryBar,
+  footerRowStyle, footerRowHeight,
+} from '@/app/components/tableSummary';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -76,24 +80,41 @@ const columnDefs: ColDef<RunRecord>[] = [
 
 export default function RunsPage() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
-  const runsSummaryRow = useMemo<RunRecord[]>(() => {
-    if (runs.length === 0) return [];
-    return [{
-      _id: '',
-      run_id: `סה"כ: ${runs.length} ריצות`,
-      calc_month_display: '',
-      split_month_display: '',
-      status: '',
-      commands: runs.reduce((s, r) => s + (r.commands || 0), 0),
-      total: runs.reduce((s, r) => s + (r.total || 0), 0),
-      errors: runs.reduce((s, r) => s + (r.errors || 0), 0),
-      warnings: runs.reduce((s, r) => s + (r.warnings || 0), 0),
-      unprocessed: runs.reduce((s, r) => s + (r.unprocessed || 0), 0),
-      started_at: '',
-    }];
-  }, [runs]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
+
+  const [filteredRuns, setFilteredRuns] = useState<RunRecord[]>([]);
+  useEffect(() => setFilteredRuns(runs), [runs]);
+
+  const onFilterChanged = useCallback((p: { api: GridApi<RunRecord> }) => {
+    const next: RunRecord[] = [];
+    p.api.forEachNodeAfterFilter(node => { if (node.data) next.push(node.data); });
+    setFilteredRuns(next);
+  }, []);
+
+  const footerFields = useMemo(
+    () => columnDefs.map(c => c.field).filter(Boolean).map(f => String(f)),
+    []
+  );
+
+  const { getAggType, setAggType } = useColumnAggTypes(runs as unknown as Record<string, unknown>[]);
+
+  const colDefsWithFooter = useMemo(
+    () => withFooterCells(columnDefs, runs as unknown as Record<string, unknown>[], getAggType, setAggType),
+    [runs, getAggType, setAggType]
+  );
+
+  const runsSummaryRow = useMemo(
+    () => buildFooterRow(filteredRuns as unknown as Record<string, unknown>[], footerFields, getAggType),
+    [filteredRuns, footerFields, getAggType]
+  );
+
+  const summaryColumns = useMemo(
+    () => columnDefs
+      .filter(c => !!c.field)
+      .map(c => ({ field: String(c.field), headerName: c.headerName })),
+    []
+  );
 
   useEffect(() => {
     fetch('/api/runs')
@@ -164,21 +185,24 @@ export default function RunsPage() {
             טוען נתונים...
           </div>
         ) : (
-          <div className="ag-theme-alpine" style={{ height: 600 }}>
-            <AgGridReact<RunRecord>
-              theme="legacy"
-              rowData={runs}
-              columnDefs={columnDefs}
-              enableRtl={true}
-              defaultColDef={{ sortable: true, resizable: true }}
-              pagination={true}
-              paginationPageSize={20}
-              pinnedBottomRowData={runsSummaryRow}
-              getRowStyle={(p) => p.node.rowPinned === 'bottom'
-                ? { fontWeight: 'bold', background: '#f6f8fa', color: '#0969da' }
-                : undefined}
-            />
-          </div>
+          <>
+            <TableSummaryBar rows={runs as unknown as Record<string, unknown>[]} columns={summaryColumns} recordLabel="ריצות" />
+            <div className="ag-theme-alpine" style={{ height: 600 }}>
+              <AgGridReact<RunRecord>
+                theme="legacy"
+                rowData={runs}
+                columnDefs={colDefsWithFooter}
+                enableRtl={true}
+                defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                pagination={true}
+                paginationPageSize={20}
+                onFilterChanged={onFilterChanged}
+                pinnedBottomRowData={runsSummaryRow}
+                getRowStyle={footerRowStyle}
+                getRowHeight={footerRowHeight}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>
