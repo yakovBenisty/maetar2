@@ -2,6 +2,63 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/mongo';
 import { Document, Filter } from 'mongodb';
 
+// חודש_חישוב / חודש_תחולה נשמרים ב-Mongo בשלושה פורמטים שונים בפועל
+// (Date, מספר YYYYMM, מחרוזת "YYYY/MM") — תלוי אם הערך המקורי ב-CSV
+// עמד בפורמט MM/YYYY שהאימפורט יודע לפרסר. לכן ההשוואה נעשית דרך $expr
+// שממיר כל אחד מהפורמטים האלה למספר YYYYMM אחיד לפני ההשוואה,
+// במקום $gte/$lte ישיר על השדה שמפספס ערכים שאינם מסוג Date.
+function yyyymmExprFromField(field: string) {
+  return {
+    $switch: {
+      branches: [
+        {
+          case: { $eq: [{ $type: `$${field}` }, 'date'] },
+          then: { $add: [{ $multiply: [{ $year: `$${field}` }, 100] }, { $month: `$${field}` }] },
+        },
+        {
+          case: { $eq: [{ $type: `$${field}` }, 'string'] },
+          then: {
+            $let: {
+              vars: { parts: { $split: [`$${field}`, '/'] } },
+              in: {
+                $cond: [
+                  { $eq: [{ $size: '$$parts' }, 2] },
+                  {
+                    $add: [
+                      { $multiply: [{ $convert: { input: { $arrayElemAt: ['$$parts', 0] }, to: 'int', onError: null, onNull: null } }, 100] },
+                      { $convert: { input: { $arrayElemAt: ['$$parts', 1] }, to: 'int', onError: null, onNull: null } },
+                    ],
+                  },
+                  null,
+                ],
+              },
+            },
+          },
+        },
+        {
+          case: { $in: [{ $type: `$${field}` }, ['int', 'long', 'double', 'decimal']] },
+          then: `$${field}`,
+        },
+      ],
+      default: null,
+    },
+  };
+}
+
+function monthToYYYYMM(monthStr: string): number {
+  const [y, m] = monthStr.split('-').map(Number);
+  return y * 100 + m;
+}
+
+function buildMonthRangeExpr(field: string, from?: string, to?: string): Record<string, unknown> | null {
+  if (!from && !to) return null;
+  const normalized = yyyymmExprFromField(field);
+  const conds: unknown[] = [{ $ne: [normalized, null] }];
+  if (from) conds.push({ $gte: [normalized, monthToYYYYMM(from)] });
+  if (to) conds.push({ $lte: [normalized, monthToYYYYMM(to)] });
+  return { $and: conds };
+}
+
 interface QueryBody {
   collections?: string[];
   nose_codes?: string[];
@@ -34,38 +91,21 @@ export async function POST(req: NextRequest) {
 
     for (const colName of collections) {
       const query: Filter<Document> = {};
+      const exprConds: unknown[] = [];
 
       if (calc_month) {
-        const [year, month] = calc_month.split('-').map(Number);
-        query['חודש_חישוב'] = new Date(Date.UTC(year, month - 1, 1));
+        const exact = monthToYYYYMM(calc_month);
+        exprConds.push({ $eq: [yyyymmExprFromField('חודש_חישוב'), exact] });
       } else {
-        if (from_month || to_month) {
-          const dateFilter: Record<string, Date> = {};
-          if (from_month) {
-            const [y, m] = from_month.split('-').map(Number);
-            dateFilter['$gte'] = new Date(Date.UTC(y, m - 1, 1));
-          }
-          if (to_month) {
-            const [y, m] = to_month.split('-').map(Number);
-            dateFilter['$lte'] = new Date(Date.UTC(y, m - 1, 1));
-          }
-          if (Object.keys(dateFilter).length > 0) {
-            query['חודש_חישוב'] = dateFilter as unknown as Date;
-          }
-        }
+        const calcExpr = buildMonthRangeExpr('חודש_חישוב', from_month, to_month);
+        if (calcExpr) exprConds.push(calcExpr);
       }
 
-      if (from_tachula || to_tachula) {
-        const tachulaFilter: Record<string, Date> = {};
-        if (from_tachula) {
-          const [y, m] = from_tachula.split('-').map(Number);
-          tachulaFilter['$gte'] = new Date(Date.UTC(y, m - 1, 1));
-        }
-        if (to_tachula) {
-          const [y, m] = to_tachula.split('-').map(Number);
-          tachulaFilter['$lte'] = new Date(Date.UTC(y, m - 1, 1));
-        }
-        query['חודש_תחולה'] = tachulaFilter as unknown as Date;
+      const tachulaExpr = buildMonthRangeExpr('חודש_תחולה', from_tachula, to_tachula);
+      if (tachulaExpr) exprConds.push(tachulaExpr);
+
+      if (exprConds.length > 0) {
+        query['$expr'] = (exprConds.length === 1 ? exprConds[0] : { $and: exprConds }) as unknown as Filter<Document>['$expr'];
       }
 
       if (nose_codes && nose_codes.length > 0) {

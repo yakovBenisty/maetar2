@@ -173,9 +173,16 @@ function MultiSelect({ label, items, selected, onChange, placeholder, allLabel =
             />
           </div>
           <div className="flex gap-1 px-2 py-1.5 border-b border-[#d1d9e0]">
-            <button onClick={() => onChange(items.map(i => i.value))} className="text-[11px] text-[#0969da] hover:underline">הכל</button>
+            <button onClick={() => onChange(filtered.map(i => i.value))} className="text-[11px] text-[#0969da] hover:underline">
+              {search ? 'בחר מסונן' : 'הכל'}
+            </button>
             <span className="text-[#d1d9e0]">|</span>
-            <button onClick={() => onChange([])} className="text-[11px] text-[#636c76] hover:underline">נקה</button>
+            <button
+              onClick={() => onChange(search ? selected.filter(v => !filtered.some(i => i.value === v)) : [])}
+              className="text-[11px] text-[#636c76] hover:underline"
+            >
+              {search ? 'נקה מסונן' : 'נקה'}
+            </button>
           </div>
           <div className="overflow-y-auto" style={{ maxHeight: 240 }}>
             {filtered.map(item => (
