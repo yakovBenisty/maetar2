@@ -19,6 +19,23 @@ export interface MitarMonth {
 
 type CookieJar = Map<string, string>;
 
+/** עוטף שגיאת fetch (שהודעתה תמיד "fetch failed") בפירוט הסיבה האמיתית (DNS/חיבור/תעודה) מתוך error.cause. */
+async function fetchDescriptive(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+    const causeMsg =
+      cause instanceof Error
+        ? `${cause.name}: ${cause.message}${'code' in cause ? ` (${(cause as NodeJS.ErrnoException).code})` : ''}`
+        : cause
+          ? String(cause)
+          : undefined;
+    const baseMsg = err instanceof Error ? err.message : String(err);
+    throw new Error(`לא ניתן להתחבר ל-${new URL(url).host}: ${baseMsg}${causeMsg ? ` — ${causeMsg}` : ''}`);
+  }
+}
+
 function mergeCookies(jar: CookieJar, res: Response): void {
   const headersWithGetSetCookie = res.headers as Headers & { getSetCookie?: () => string[] };
   const setCookies =
@@ -56,7 +73,7 @@ function extractInputValue(html: string, name: string): string {
 
 async function postForm(jar: CookieJar, path: string, fields: Record<string, string>): Promise<Response> {
   const body = new URLSearchParams(fields);
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchDescriptive(`${BASE}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -74,7 +91,7 @@ async function followRedirectIfAny(jar: CookieJar, res: Response, fromPath: stri
   const location = res.headers.get('location');
   if (!location) return;
   const redirectUrl = new URL(location, `${BASE}${fromPath}`).toString();
-  const followed = await fetch(redirectUrl, {
+  const followed = await fetchDescriptive(redirectUrl, {
     headers: { Cookie: cookieHeader(jar) },
     redirect: 'manual',
   });
@@ -88,7 +105,7 @@ async function followRedirectIfAny(jar: CookieJar, res: Response, fromPath: stri
 export async function openMitarSession(beneficiaryCode: string): Promise<string> {
   const jar: CookieJar = new Map();
 
-  const homeRes = await fetch(`${BASE}${HOME_PATH}`);
+  const homeRes = await fetchDescriptive(`${BASE}${HOME_PATH}`);
   mergeCookies(jar, homeRes);
   const homeHtml = await homeRes.text();
 
@@ -134,7 +151,7 @@ export async function openMitarSession(beneficiaryCode: string): Promise<string>
 
 /** מחזיר את רשימת החודשים הזמינים להורדה עבור המוטב שנבחר ב-session, מהחדש לישן. */
 export async function listAvailableMonths(cookie: string): Promise<MitarMonth[]> {
-  const res = await fetch(`${BASE}/MtrNet/horadatkv.aspx?slct=zip`, { headers: { Cookie: cookie } });
+  const res = await fetchDescriptive(`${BASE}/MtrNet/horadatkv.aspx?slct=zip`, { headers: { Cookie: cookie } });
   if (!res.ok) throw new Error(`טעינת רשימת החודשים נכשלה (סטטוס ${res.status})`);
   const html = await res.text();
 
@@ -149,7 +166,7 @@ export async function listAvailableMonths(cookie: string): Promise<MitarMonth[]>
 
 /** מוריד את קובץ ה-ZIP (14 קבצי ה-CSV) עבור חודש/שנה נתונים. */
 export async function downloadMonthZip(cookie: string, month: number, year: number): Promise<Buffer> {
-  const res = await fetch(`${BASE}/MtrNet/Horada.aspx?date=${month}_${year}`, { headers: { Cookie: cookie } });
+  const res = await fetchDescriptive(`${BASE}/MtrNet/Horada.aspx?date=${month}_${year}`, { headers: { Cookie: cookie } });
   if (!res.ok) throw new Error(`הורדת הקובץ עבור ${month}/${year} נכשלה (סטטוס ${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
