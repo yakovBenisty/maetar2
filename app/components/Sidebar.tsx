@@ -15,6 +15,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: '/', label: 'דשבורד', icon: '📊' },
   { href: '/upload', label: 'העלאת קבצים', icon: '📁' },
+  { href: '/mitar-sync', label: 'סנכרון מית"ר', icon: '🔄' },
   { href: '/prepare', label: 'הכנת פקודה', icon: '⚙️' },
   { href: '/runs', label: 'היסטוריית ריצות', icon: '📋' },
   { href: '/rikhuz', label: 'דוח ריכוז', icon: '📑' },
