@@ -10,6 +10,8 @@ interface NavItem {
   label: string;
   icon: string;
   adminOnly?: boolean;
+  settlementOnly?: boolean;
+  managerOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -24,6 +26,9 @@ const navItems: NavItem[] = [
   { href: '/audit',   label: 'דוח בקרה',    icon: '🔍' },
   { href: '/noseme', label: 'נושאים', icon: '🏷️' },
   { href: '/mosdot', label: 'מוסדות', icon: '🏫' },
+  { href: '/projects', label: 'פרויקטים (התחשבנות)', icon: '🧮', settlementOnly: true },
+  { href: '/settlement/dashboard', label: 'לוח ריכוז מפעילים', icon: '📊', settlementOnly: true, managerOnly: true },
+  { href: '/settlement/operator-report', label: 'דוח מפעיל מאוחד', icon: '🧾', settlementOnly: true },
   { href: '/users', label: 'משתמשים', icon: '👥', adminOnly: true },
 ];
 
@@ -42,6 +47,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
 
   const isAdmin = session?.user?.role === 'admin';
+  const settlementRole = session?.user?.role;
+  const isSettlementManager = settlementRole === 'admin' || settlementRole === 'program_manager';
+  const hasSettlementAccess = isSettlementManager || settlementRole === 'operator';
   const displayName =
     session?.user?.firstName
       ? `${session.user.firstName} ${session.user.lastName ?? ''}`.trim()
@@ -54,7 +62,12 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       .catch(() => setDbStatus({ connected: false }));
   }, []);
 
-  const visibleItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const visibleItems = navItems.filter((item) => {
+    if (item.adminOnly && !isAdmin) return false;
+    if (item.settlementOnly && !hasSettlementAccess) return false;
+    if (item.managerOnly && !isSettlementManager) return false;
+    return true;
+  });
 
   return (
     <>

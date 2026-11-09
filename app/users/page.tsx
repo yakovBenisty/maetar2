@@ -4,11 +4,20 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 
+type UserRole = 'user' | 'admin' | 'program_manager' | 'operator';
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'מנהל מערכת',
+  program_manager: 'מנהל תוכנית',
+  operator: 'מפעיל',
+  user: 'משתמש רגיל',
+};
+
 interface UserRecord {
   email: string;
   firstName: string;
   lastName: string;
-  role: 'user' | 'admin';
+  role: UserRole;
   createdAt?: string;
 }
 
@@ -193,12 +202,17 @@ export default function UsersPage() {
               <label className="block text-xs font-medium text-[#636c76] mb-1">סוג משתמש *</label>
               <select
                 value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value as 'user' | 'admin' })}
+                onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })}
                 className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da] bg-white"
               >
                 <option value="user">משתמש רגיל</option>
+                <option value="program_manager">מנהל תוכנית</option>
+                <option value="operator">מפעיל</option>
                 <option value="admin">מנהל מערכת</option>
               </select>
+              <p className="text-xs text-[#8c959f] mt-1">
+                &quot;מנהל תוכנית&quot; ו&quot;מנהל מערכת&quot; מקבלים גישה מלאה למודול ההתחשבנות. &quot;מפעיל&quot; רואה רק פרויקטים שהוקצו לו (לפי כתובת המייל) במסך ניהול הפרויקטים.
+              </p>
             </div>
             <div className="sm:col-span-2 flex gap-2 justify-end pt-2">
               <button
@@ -249,12 +263,14 @@ export default function UsersPage() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                        u.role === 'admin'
+                        u.role === 'admin' || u.role === 'program_manager'
                           ? 'bg-[#ddf4ff] text-[#0969da]'
-                          : 'bg-[#f0f3f6] text-[#636c76]'
+                          : u.role === 'operator'
+                            ? 'bg-[#fff8c5] text-[#9a6700]'
+                            : 'bg-[#f0f3f6] text-[#636c76]'
                       }`}
                     >
-                      {u.role === 'admin' ? 'מנהל מערכת' : 'משתמש רגיל'}
+                      {ROLE_LABELS[u.role] ?? u.role}
                     </span>
                   </td>
                   <td className="px-4 py-3">

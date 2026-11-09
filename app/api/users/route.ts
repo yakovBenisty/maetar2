@@ -34,13 +34,13 @@ export async function POST(req: NextRequest) {
     email: string;
     firstName: string;
     lastName: string;
-    role: 'user' | 'admin';
+    role: 'user' | 'admin' | 'program_manager' | 'operator';
   };
 
   if (!email || !firstName || !lastName) {
     return NextResponse.json({ error: 'שדות חובה חסרים' }, { status: 400 });
   }
-  if (!['user', 'admin'].includes(role)) {
+  if (!['user', 'admin', 'program_manager', 'operator'].includes(role)) {
     return NextResponse.json({ error: 'סוג משתמש לא תקין' }, { status: 400 });
   }
 
