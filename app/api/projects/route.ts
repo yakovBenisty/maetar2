@@ -66,10 +66,8 @@ export async function POST(req: NextRequest) {
   };
 
   if (_id) {
-    const existing = await db.collection('PROJECTS').findOne({ _id: new ObjectId(_id) }, { projection: { status: 1 } });
-    if (existing?.status === 'locked') {
-      return NextResponse.json({ ok: false, error: 'הפרויקט נעול — לא ניתן לערוך' }, { status: 400 });
-    }
+    // נעילה (PRD 5.8) חוסמת רק טעינת הוצאות/קיזוזים, דוחות התחשבנות ופרמטרים —
+    // לא עריכת פרטי הפרויקט עצמו (שם/נושאים/תאריכים וכו'), שזו לא "פעולה כספית".
     await db.collection('PROJECTS').updateOne({ _id: new ObjectId(_id) }, { $set: doc });
     return NextResponse.json({ ok: true, id: _id });
   }

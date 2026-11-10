@@ -61,6 +61,7 @@ export default function ProjectsPage() {
   const hasAccess = canManage || role === 'operator';
 
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [showLocked, setShowLocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -224,6 +225,8 @@ export default function ProjectsPage() {
     return <div className="p-8 text-[#636c76] text-sm">טוען...</div>;
   }
 
+  const visibleProjects = showLocked ? projects : projects.filter((p) => p.status !== 'locked');
+
   return (
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-6">
@@ -231,14 +234,22 @@ export default function ProjectsPage() {
           <h1 className="text-xl font-bold text-[#1f2328]">ניהול פרויקטים</h1>
           <p className="text-sm text-[#636c76] mt-0.5">נושאים תפעוליים (ניצנים, קייטנות וכו׳) להתחשבנות מול מפעילים</p>
         </div>
-        {canManage && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={openAdd}
-            className="px-4 py-2 bg-[#0969da] text-white text-sm font-medium rounded-lg hover:bg-[#0860ca] transition-colors"
+            onClick={() => setShowLocked((v) => !v)}
+            className="px-4 py-2 text-sm text-[#636c76] border border-[#d1d9e0] rounded-lg hover:bg-[#f0f3f6] transition-colors"
           >
-            + פרויקט חדש
+            {showLocked ? 'הצג רק פרויקטים פתוחים' : 'הצג גם פרויקטים סגורים'}
           </button>
-        )}
+          {canManage && (
+            <button
+              onClick={openAdd}
+              className="px-4 py-2 bg-[#0969da] text-white text-sm font-medium rounded-lg hover:bg-[#0860ca] transition-colors"
+            >
+              + פרויקט חדש
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -368,8 +379,10 @@ export default function ProjectsPage() {
       <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-sm text-[#636c76]">טוען פרויקטים...</div>
-        ) : projects.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[#636c76]">אין פרויקטים עדיין</div>
+        ) : visibleProjects.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[#636c76]">
+            {showLocked ? 'אין פרויקטים' : 'אין פרויקטים פתוחים — ייתכן שיש פרויקטים סגורים, לחץ/י "הצג גם פרויקטים סגורים"'}
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -383,7 +396,7 @@ export default function ProjectsPage() {
               </tr>
             </thead>
             <tbody>
-              {projects.map((p) => (
+              {visibleProjects.map((p) => (
                 <tr key={p._id} className="border-b border-[#f0f3f6] hover:bg-[#f6f8fa]">
                   <td className="px-4 py-3 text-[#1f2328] font-medium">
                     <Link href={`/projects/${p._id}`} className="hover:underline text-[#0969da]">{p.name}</Link>

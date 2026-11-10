@@ -79,6 +79,19 @@ interface RunRecord {
   paid_audit: { amount: number; note: string; updated_at: string; updated_by: string }[];
   created_at: string;
   created_by: string;
+  source?: 'legacy_import' | 'server' | string;
+  source_tab?: string;
+}
+
+/**
+ * יתרה להצגה לכל דוח: עבור דוח רגיל, calculatedTotal כבר "טרי" (לא מנכה
+ * תשלום) ולכן מנכים ממנו paid_total. עבור דוח שיובא מהיסטוריה
+ * (source='legacy_import'), calculatedTotal כבר שווה ל"יתרה לתשלום" הסופית
+ * כפי שהיא בקובץ המקור (כבר נטו אחרי תשלום) — ניכוי נוסף של paid_total שם
+ * היה מנכה את אותו תשלום פעמיים.
+ */
+function runBalance(r: RunRecord): number {
+  return r.source === 'legacy_import' ? r.breakdown.calculatedTotal : r.breakdown.calculatedTotal - r.paid_total;
 }
 
 function money(n: number): string {
@@ -658,12 +671,13 @@ export default function ProjectDetailPage() {
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מחושב</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">שולם בפועל</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">יתרה</th>
+                  <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מקור</th>
                   {canManage && <th className="px-4 py-2"></th>}
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-4 text-center text-xs text-[#636c76]">אין דוחות עדיין</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-4 text-center text-xs text-[#636c76]">אין דוחות עדיין</td></tr>
                 ) : runs.map((r) => (
                   <tr key={r._id} className="border-b border-[#f0f3f6]">
                     <td className="px-4 py-2 text-[#1f2328]">{new Date(r.created_at).toLocaleString('he-IL')}</td>
@@ -678,7 +692,8 @@ export default function ProjectDetailPage() {
                         </div>
                       ) : money(r.paid_total)}
                     </td>
-                    <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.breakdown.calculatedTotal - r.paid_total)}</td>
+                    <td className="px-4 py-2 font-mono text-[#1f2328]">{money(runBalance(r))}</td>
+                    <td className="px-4 py-2 text-xs text-[#636c76]">{r.source === 'legacy_import' ? `היסטורי (${r.source_tab})` : 'רגיל'}</td>
                     {canManage && editingRunId !== r._id && (
                       <td className="px-4 py-2">
                         <button onClick={() => openEditPaid(r)} className="text-xs text-[#0969da] hover:underline">עדכן תשלום</button>
