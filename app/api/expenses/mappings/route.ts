@@ -6,15 +6,23 @@ import { getSettlementRole } from '@/lib/settlement-auth';
 
 export type ExpenseKind = 'operator_expense' | 'rashut_expense' | 'reservation' | 'parent_payment';
 
+/** שכר: מפתח יחודי = ת.ז + חודש שכר. חשבונית (רכש/אחר): מפתח יחודי = מספר חשבונית + ח.פ. */
+export type ExpenseNature = 'salary' | 'invoice';
+
 export interface UploadMappingDoc {
   _id?: ObjectId;
   kind: ExpenseKind;
   label: string;
-  date_column: string;
+  nature: ExpenseNature;
   amount_column: string;
-  description_column: string;
-  category_column: string;
-  key_columns: string[];
+  description_column?: string;
+  // nature=invoice
+  date_column?: string;
+  invoice_number_column?: string;
+  tax_id_column?: string;
+  // nature=salary
+  tz_column?: string;
+  salary_month_column?: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -41,21 +49,30 @@ export async function POST(req: NextRequest) {
   if (!role) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json() as UploadMappingDoc & { _id?: string };
-  const { _id, kind, label, date_column, amount_column, description_column, category_column, key_columns } = body;
+  const { _id, kind, label, nature, amount_column, description_column, date_column, invoice_number_column, tax_id_column, tz_column, salary_month_column } = body;
 
-  if (!kind || !label || !amount_column || !key_columns?.length) {
-    return NextResponse.json({ ok: false, error: 'חסרים שדות חובה (סוג, שם, עמודת סכום, עמודות מפתח)' }, { status: 400 });
+  if (!kind || !label || !nature || !amount_column) {
+    return NextResponse.json({ ok: false, error: 'חסרים שדות חובה (סוג, שם, מהות, עמודת סכום)' }, { status: 400 });
+  }
+  if (nature === 'salary' && (!tz_column || !salary_month_column)) {
+    return NextResponse.json({ ok: false, error: 'במיפוי שכר יש לבחור עמודת ת.ז ועמודת חודש שכר' }, { status: 400 });
+  }
+  if (nature === 'invoice' && (!invoice_number_column || !tax_id_column || !date_column)) {
+    return NextResponse.json({ ok: false, error: 'במיפוי חשבונית יש לבחור עמודת מספר חשבונית, עמודת ח.פ/ת.ז ועמודת תאריך' }, { status: 400 });
   }
 
   const db = await getDb();
   const doc = {
     kind,
     label,
-    date_column: date_column ?? '',
+    nature,
     amount_column,
     description_column: description_column ?? '',
-    category_column: category_column ?? '',
-    key_columns,
+    date_column: date_column ?? '',
+    invoice_number_column: invoice_number_column ?? '',
+    tax_id_column: tax_id_column ?? '',
+    tz_column: tz_column ?? '',
+    salary_month_column: salary_month_column ?? '',
     updated_at: new Date(),
   };
 

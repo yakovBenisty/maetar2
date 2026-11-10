@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { Fragment, useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
@@ -94,6 +94,16 @@ function runBalance(r: RunRecord): number {
   return r.source === 'legacy_import' ? r.breakdown.calculatedTotal : r.breakdown.calculatedTotal - r.paid_total;
 }
 
+/** "ביצוע" ברוטו שממנו יוצאים לפני קיזוזים: הוצאות מפעיל בפועל + תקורה + מקדמה. */
+function runGross(r: RunRecord): number {
+  return r.breakdown.operatorExpensesTotal + r.breakdown.overheadAmount + r.breakdown.advanceAmount;
+}
+
+/** סך הקיזוזים שמנוכים מה"ביצוע" הברוטו כדי להגיע ל"מחושב": שיריונים, כספי הורים, ותשלומים קודמים. */
+function runOffsets(r: RunRecord): number {
+  return r.breakdown.reservationsTotal + r.breakdown.parentPaymentsTotal + r.breakdown.previouslyPaidTotal;
+}
+
 function money(n: number): string {
   return n.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -141,6 +151,7 @@ export default function ProjectDetailPage() {
   const [editingRunId, setEditingRunId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState('');
   const [editNote, setEditNote] = useState('');
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === 'loading') return;
@@ -406,11 +417,21 @@ export default function ProjectDetailPage() {
             <Row label="הוצאות מפעיל בפועל" value={breakdown.operatorExpensesTotal} />
             <Row label={`תקורה (${(breakdown.overheadPct * 100).toFixed(1)}%)`} value={breakdown.overheadAmount} />
             <Row label={`מקדמה (${(breakdown.advancePct * 100).toFixed(1)}%)`} value={breakdown.advanceAmount} />
+            <Row
+              label={'= סה"כ מגיע בגין ביצוע (כולל תקורה+מקדמה)'}
+              value={breakdown.operatorExpensesTotal + breakdown.overheadAmount + breakdown.advanceAmount}
+              strong
+            />
             <Row label="שיריונים (קיזוז)" value={-breakdown.reservationsTotal} />
             <Row label="כספי הורים (קיזוז)" value={-breakdown.parentPaymentsTotal} />
-            <Row label="שולם בעבר (קיזוז)" value={-breakdown.previouslyPaidTotal} />
-            <Row label="יתרה לתשלום למפעיל" value={breakdown.calculatedTotal} strong highlight />
+            <Row label="שולם בעבר בדוחות קודמים (קיזוז)" value={-breakdown.previouslyPaidTotal} />
+            <Row label="= יתרה לתשלום למפעיל" value={breakdown.calculatedTotal} strong highlight />
           </div>
+          {breakdown.incomeTotal === 0 && breakdown.operatorExpensesTotal === 0 && breakdown.previouslyPaidTotal !== 0 && (
+            <div className="p-3 bg-[#fff8c5] border border-[#9a6700] rounded-lg text-sm text-[#9a6700]">
+              ⚠️ אין נתוני הכנסה/הוצאה חיים לתקופה זו (ייתכן שקודי נושא/טווח תאריכים לא מוגדרים נכון בפרמטרי הפרויקט) — המספרים כאן אינם משקפים עדיין את מצב הפרויקט בפועל, רק את מה ששולם בעבר.
+            </div>
+          )}
         </div>
       )}
 
@@ -668,38 +689,73 @@ export default function ProjectDetailPage() {
               <thead>
                 <tr className="bg-[#f6f8fa] border-b border-[#d1d9e0] text-right">
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">תאריך הפקה</th>
+                  <th className="px-4 py-2 text-xs font-medium text-[#636c76]">ביצוע (כולל תקורה+מקדמה)</th>
+                  <th className="px-4 py-2 text-xs font-medium text-[#636c76]">קיזוזים</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מחושב</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">שולם בפועל</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">יתרה</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מקור</th>
-                  {canManage && <th className="px-4 py-2"></th>}
+                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-4 text-center text-xs text-[#636c76]">אין דוחות עדיין</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-4 text-center text-xs text-[#636c76]">אין דוחות עדיין</td></tr>
                 ) : runs.map((r) => (
-                  <tr key={r._id} className="border-b border-[#f0f3f6]">
-                    <td className="px-4 py-2 text-[#1f2328]">{new Date(r.created_at).toLocaleString('he-IL')}</td>
-                    <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.breakdown.calculatedTotal)}</td>
-                    <td className="px-4 py-2 font-mono text-[#1f2328]">
-                      {editingRunId === r._id ? (
-                        <div className="flex items-center gap-1">
-                          <input type="number" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="w-24 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />
-                          <input value={editNote} onChange={(e) => setEditNote(e.target.value)} placeholder="הערה" className="w-24 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />
-                          <button onClick={handleSavePaid} className="text-xs text-[#1a7f37]">שמור</button>
-                          <button onClick={() => setEditingRunId(null)} className="text-xs text-[#636c76]">ביטול</button>
-                        </div>
-                      ) : money(r.paid_total)}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-[#1f2328]">{money(runBalance(r))}</td>
-                    <td className="px-4 py-2 text-xs text-[#636c76]">{r.source === 'legacy_import' ? `היסטורי (${r.source_tab})` : 'רגיל'}</td>
-                    {canManage && editingRunId !== r._id && (
-                      <td className="px-4 py-2">
-                        <button onClick={() => openEditPaid(r)} className="text-xs text-[#0969da] hover:underline">עדכן תשלום</button>
+                  <Fragment key={r._id}>
+                    <tr className="border-b border-[#f0f3f6]">
+                      <td className="px-4 py-2 text-[#1f2328]">{new Date(r.created_at).toLocaleString('he-IL')}</td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{money(runGross(r))}</td>
+                      <td className="px-4 py-2 font-mono text-[#cf222e]">-{money(runOffsets(r))}</td>
+                      <td className="px-4 py-2 font-mono font-bold text-[#1f2328]">{money(r.breakdown.calculatedTotal)}</td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">
+                        {editingRunId === r._id ? (
+                          <div className="flex items-center gap-1">
+                            <input type="number" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="w-24 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />
+                            <input value={editNote} onChange={(e) => setEditNote(e.target.value)} placeholder="הערה" className="w-24 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />
+                            <button onClick={handleSavePaid} className="text-xs text-[#1a7f37]">שמור</button>
+                            <button onClick={() => setEditingRunId(null)} className="text-xs text-[#636c76]">ביטול</button>
+                          </div>
+                        ) : money(r.paid_total)}
                       </td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{money(runBalance(r))}</td>
+                      <td className="px-4 py-2 text-xs text-[#636c76]">{r.source === 'legacy_import' ? `היסטורי (${r.source_tab})` : 'רגיל'}</td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <button onClick={() => setExpandedRunId(expandedRunId === r._id ? null : r._id)} className="text-xs text-[#0969da] hover:underline">
+                          {expandedRunId === r._id ? 'סגור פרטים' : 'פתח פרטים'}
+                        </button>
+                        {canManage && editingRunId !== r._id && (
+                          <button onClick={() => openEditPaid(r)} className="text-xs text-[#0969da] hover:underline mr-2">עדכן תשלום</button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandedRunId === r._id && (
+                      <tr className="border-b border-[#f0f3f6] bg-[#f6f8fa]">
+                        <td colSpan={8} className="px-4 py-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-xs">
+                            <Row label="הכנסה ממשרד החינוך" value={r.breakdown.incomeTotal} />
+                            {r.breakdown.rashutSplitType && <Row label="חלק רשות אפקטיבי (רצפה)" value={r.breakdown.rashutShareEffective} />}
+                            <Row label="תקציב הפעלה למפעיל" value={r.breakdown.operatorBudget} />
+                            <Row label="הוצאות מפעיל בפועל" value={r.breakdown.operatorExpensesTotal} />
+                            <Row label={`תקורה (${(r.breakdown.overheadPct * 100).toFixed(1)}%)`} value={r.breakdown.overheadAmount} />
+                            <Row label={`מקדמה (${(r.breakdown.advancePct * 100).toFixed(1)}%)`} value={r.breakdown.advanceAmount} />
+                            <Row label="= ביצוע כולל תקורה+מקדמה" value={runGross(r)} strong />
+                            <Row label="שיריונים (קיזוז)" value={-r.breakdown.reservationsTotal} />
+                            <Row label="כספי הורים (קיזוז)" value={-r.breakdown.parentPaymentsTotal} />
+                            <Row label="שולם בדוחות קודמים (קיזוז)" value={-r.breakdown.previouslyPaidTotal} />
+                            <Row label="= מחושב (יתרה לתשלום לדוח זה)" value={r.breakdown.calculatedTotal} strong highlight />
+                            <Row label="שולם בפועל עבור דוח זה" value={r.paid_total} />
+                            <Row label="= יתרה" value={runBalance(r)} strong />
+                          </div>
+                          {r.source === 'legacy_import' && (
+                            <p className="text-xs text-[#9a6700] mt-2">
+                              דוח זה יובא מההיסטוריה (טאב &quot;{r.source_tab}&quot;) — שדה &quot;מחושב&quot; הוא היתרה הסופית כפי שדווחה בגיליון המקור, ולא בהכרח שווה בדיוק לחיבור הרכיבים שלמעלה (יתכנו קיזוזים שכבר נוכו בגיליון המקורי בתוך &quot;ביצוע&quot; עצמו).
+                            </p>
+                          )}
+                        </td>
+                      </tr>
                     )}
-                  </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>

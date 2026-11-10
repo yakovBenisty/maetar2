@@ -3,15 +3,30 @@ import { ObjectId } from 'mongodb';
 import { auth } from '@/auth';
 import { getDb } from '@/lib/mongo';
 import { getSettlementRole, canManageSettlement } from '@/lib/settlement-auth';
-import type { ExpenseKind } from './mappings/route';
+import type { ExpenseKind, ExpenseNature } from './mappings/route';
 
 interface IncomingRow {
-  row_key: string;
+  nature: ExpenseNature;
   date: string | null;
   amount: number;
   description: string;
-  category: string;
+  // nature=invoice
+  invoice_number?: string;
+  tax_id?: string;
+  // nature=salary
+  tz?: string;
+  salary_month?: string;
   raw: Record<string, unknown>;
+}
+
+/** המפתח היחודי נגזר מהמהות — לא נבחר חופשית ע"י המשתמש (מונע כפילות בין קבצים/טעינות). */
+function buildRowKey(row: IncomingRow): { key: string; error?: string } {
+  if (row.nature === 'salary') {
+    if (!row.tz || !row.salary_month) return { key: '', error: 'שורת שכר חייבת ת.ז וחודש שכר' };
+    return { key: `salary|${row.tz}|${row.salary_month}` };
+  }
+  if (!row.invoice_number || !row.tax_id) return { key: '', error: 'שורת חשבונית חייבת מספר חשבונית וח.פ/ת.ז' };
+  return { key: `invoice|${row.invoice_number}|${row.tax_id}` };
 }
 
 async function assertProjectWritable(
@@ -96,16 +111,20 @@ export async function POST(req: NextRequest) {
 
   const uploadBatchId = `UP_${Date.now()}`;
   const uploadedAt = new Date();
-  const summary: { row_key: string; status: 'imported' | 'skipped' | 'replaced' }[] = [];
+  const summary: { row_key: string; status: 'imported' | 'skipped' | 'replaced' | 'invalid'; error?: string }[] = [];
 
   for (const row of rows) {
-    const existing = source === 'file'
-      ? await db.collection('EXPENSE_ENTRIES').findOne({ project_id, kind, row_key: row.row_key }, { projection: { _id: 1 } })
-      : null;
+    const { key: rowKey, error: keyError } = buildRowKey(row);
+    if (keyError) {
+      summary.push({ row_key: '', status: 'invalid', error: keyError });
+      continue;
+    }
+
+    const existing = await db.collection('EXPENSE_ENTRIES').findOne({ project_id, kind, row_key: rowKey }, { projection: { _id: 1 } });
 
     if (existing) {
       if (strategy !== 'replace') {
-        summary.push({ row_key: row.row_key, status: 'skipped' });
+        summary.push({ row_key: rowKey, status: 'skipped' });
         continue;
       }
       await db.collection('EXPENSE_ENTRIES').deleteOne({ _id: existing._id });
@@ -118,17 +137,21 @@ export async function POST(req: NextRequest) {
       mapping_id: mapping_id ?? null,
       mapping_label: mapping_label ?? null,
       source_file: source_file ?? null,
-      row_key: row.row_key,
+      row_key: rowKey,
+      nature: row.nature,
       date: row.date ? new Date(row.date) : null,
       amount: Number(row.amount) || 0,
       description: row.description ?? '',
-      category: row.category ?? '',
+      invoice_number: row.invoice_number ?? '',
+      tax_id: row.tax_id ?? '',
+      tz: row.tz ?? '',
+      salary_month: row.salary_month ?? '',
       raw: row.raw ?? {},
       uploaded_by: session?.user?.email ?? '',
       uploaded_at: uploadedAt,
       upload_batch_id: uploadBatchId,
     });
-    summary.push({ row_key: row.row_key, status: existing ? 'replaced' : 'imported' });
+    summary.push({ row_key: rowKey, status: existing ? 'replaced' : 'imported' });
   }
 
   return NextResponse.json({ ok: true, batchId: uploadBatchId, summary });

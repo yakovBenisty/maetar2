@@ -46,7 +46,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
     return Number.isFinite(n) ? [c, n] : [c];
   });
 
-  const [incomeAgg, unmatchedAdvances, operatorExpensesTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, paidAgg, params] =
+  const [incomeAgg, unmatchedAdvances, operatorExpensesTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, allRuns, params] =
     await Promise.all([
       nosemeCodes.length
         ? db
@@ -71,13 +71,22 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
       sumExpenseKind(db, projectId, 'parent_payment'),
       db
         .collection('SETTLEMENT_RUNS')
-        .aggregate([
-          { $match: { project_id: projectId } },
-          { $group: { _id: null, total: { $sum: '$paid_total' } } },
-        ])
+        .find({ project_id: projectId }, { projection: { source: 1, paid_total: 1 } })
         .toArray(),
       getActiveParams(projectId),
     ]);
+
+  // paid_total בדוחות legacy_import הוא "שולם מצטבר עד לאותו תאריך" כפי שדווח
+  // בגיליון המקור (לא תוספתי בין דוחות) — סכימה שלו עם שאר הדוחות ההיסטוריים
+  // תספור את אותו סכום פעמים רבות. "שולם מצטבר" רק גדל עם הזמן, לכן לוקחים
+  // את המקסימום מביניהם כ"נקודת הפתיחה", ומוסיפים לו רק את מה ששולם בפועל
+  // בדוחות החיים (שם paid_total הוא אכן תוספתי per-דוח, כמתוכנן).
+  const legacyPaidTotal = allRuns
+    .filter((r) => r.source === 'legacy_import')
+    .reduce((max, r) => Math.max(max, Number(r.paid_total) || 0), 0);
+  const livePaidTotal = allRuns
+    .filter((r) => r.source !== 'legacy_import')
+    .reduce((sum, r) => sum + (Number(r.paid_total) || 0), 0);
 
   const breakdown = calculateSettlement(
     {
@@ -86,7 +95,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
       operatorExpensesTotal,
       reservationsTotal,
       parentPaymentsTotal,
-      previouslyPaidTotal: paidAgg[0]?.total ?? 0,
+      previouslyPaidTotal: legacyPaidTotal + livePaidTotal,
     },
     params
   );
