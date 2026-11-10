@@ -4,6 +4,13 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import MultiSelectSearch from '@/app/components/MultiSelectSearch';
+
+interface OperatorRecord {
+  _id: string;
+  name: string;
+  emails: string[];
+}
 
 type ModelType = 'self' | 'operator' | 'joint';
 
@@ -60,6 +67,13 @@ export default function ProjectsPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
+  const [nosemeOptions, setNosemeOptions] = useState<{ value: string; label: string }[]>([]);
+  const [operators, setOperators] = useState<OperatorRecord[]>([]);
+  const [selectedOperatorId, setSelectedOperatorId] = useState('');
+  const [addingOperator, setAddingOperator] = useState(false);
+  const [newOperatorName, setNewOperatorName] = useState('');
+  const [newOperatorEmails, setNewOperatorEmails] = useState('');
+
   useEffect(() => {
     if (status === 'loading') return;
     if (!hasAccess) router.replace('/');
@@ -80,12 +94,26 @@ export default function ProjectsPage() {
     }
   }, []);
 
+  const loadNoseme = useCallback(async () => {
+    const res = await fetch('/api/noseme');
+    const data = await res.json();
+    setNosemeOptions((data.noseme ?? []).map((n: { code: string; name?: string }) => ({ value: String(n.code), label: n.name ? `${n.code} — ${n.name}` : String(n.code) })));
+  }, []);
+
+  const loadOperators = useCallback(async () => {
+    const res = await fetch('/api/operators');
+    const data = await res.json();
+    setOperators(data.operators ?? []);
+  }, []);
+
   useEffect(() => {
     if (hasAccess) load();
-  }, [hasAccess, load]);
+    if (canManage) { loadNoseme(); loadOperators(); }
+  }, [hasAccess, canManage, load, loadNoseme, loadOperators]);
 
   function openAdd() {
     setForm(EMPTY_FORM);
+    setSelectedOperatorId('');
     setShowForm(true);
     setError('');
   }
@@ -103,8 +131,34 @@ export default function ProjectsPage() {
       date_from: toDateInput(p.date_from),
       date_to: toDateInput(p.date_to),
     });
+    setSelectedOperatorId(operators.find((o) => o.name === p.operator_name)?._id ?? '');
     setShowForm(true);
     setError('');
+  }
+
+  function selectOperator(id: string) {
+    setSelectedOperatorId(id);
+    const op = operators.find((o) => o._id === id);
+    if (op) setForm({ ...form, operator_name: op.name, operator_emails: op.emails });
+  }
+
+  async function handleAddOperator() {
+    if (!newOperatorName.trim()) return;
+    const emails = newOperatorEmails.split(',').map((s) => s.trim()).filter(Boolean);
+    const res = await fetch('/api/operators', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newOperatorName.trim(), emails }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      await loadOperators();
+      setSelectedOperatorId(data.id);
+      setForm({ ...form, operator_name: newOperatorName.trim(), operator_emails: emails });
+      setNewOperatorName('');
+      setNewOperatorEmails('');
+      setAddingOperator(false);
+    }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -194,21 +248,37 @@ export default function ProjectsPage() {
                 className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#636c76] mb-1">שם מפעיל</label>
-              <input value={form.operator_name} onChange={(e) => setForm({ ...form, operator_name: e.target.value })}
-                className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]" />
+              <label className="block text-xs font-medium text-[#636c76] mb-1">מפעיל</label>
+              <select value={selectedOperatorId} onChange={(e) => (e.target.value === '__new__' ? setAddingOperator(true) : selectOperator(e.target.value))}
+                className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da] bg-white">
+                <option value="">— ללא / בחר מפעיל —</option>
+                {operators.map((o) => <option key={o._id} value={o._id}>{o.name}</option>)}
+                <option value="__new__">+ הוסף מפעיל חדש...</option>
+              </select>
+              {addingOperator && (
+                <div className="mt-2 p-3 bg-[#f6f8fa] border border-[#d1d9e0] rounded-lg space-y-2">
+                  <input value={newOperatorName} onChange={(e) => setNewOperatorName(e.target.value)} placeholder="שם המפעיל *"
+                    className="w-full border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
+                  <input value={newOperatorEmails} onChange={(e) => setNewOperatorEmails(e.target.value)} placeholder="מיילים (מופרדים בפסיק)" dir="ltr"
+                    className="w-full border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" onClick={() => setAddingOperator(false)} className="text-xs text-[#636c76]">ביטול</button>
+                    <button type="button" onClick={handleAddOperator} className="text-xs px-3 py-1 bg-[#1f883d] text-white rounded">הוסף ובחר</button>
+                  </div>
+                </div>
+              )}
+              {form.operator_emails.length > 0 && (
+                <p className="text-xs text-[#8c959f] mt-1" dir="ltr">{form.operator_emails.join(', ')}</p>
+              )}
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#636c76] mb-1">מייל/ים של המפעיל (מופרדים בפסיק)</label>
-              <input value={form.operator_emails.join(', ')}
-                onChange={(e) => setForm({ ...form, operator_emails: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]" dir="ltr" placeholder="operator@example.com" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[#636c76] mb-1">קודי נושא (מופרדים בפסיק)</label>
-              <input value={form.noseme_codes.join(', ')}
-                onChange={(e) => setForm({ ...form, noseme_codes: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]" dir="ltr" placeholder="631, 632" />
+              <label className="block text-xs font-medium text-[#636c76] mb-1">קודי נושא</label>
+              <MultiSelectSearch
+                options={nosemeOptions}
+                selected={form.noseme_codes}
+                onChange={(codes) => setForm({ ...form, noseme_codes: codes })}
+                placeholder="חפש נושא לפי קוד או שם..."
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-[#636c76] mb-1">מתאריך (תחולה) *</label>

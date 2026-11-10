@@ -9,6 +9,11 @@
 export interface SettlementParams {
   overheadPct: number; // אחוז תקורה, כשבר עשרוני (0.12 = 12%)
   advancePct: number; // אחוז מקדמה, כשבר עשרוני
+  // התפלגות תקציב בהפעלה משותפת (אופציונלי) — "רצפה" לחלק הרשות, לא תחליף
+  // להוצאות רשות בפועל: אם החלק המוצהר (אחוז מההכנסה, או סכום קבוע) גדול
+  // מהוצאות הרשות שנטענו בפועל, הוא גובר; אם ההוצאות בפועל גבוהות ממנו, הן גוברות.
+  rashutSplitType?: 'percentage' | 'fixed';
+  rashutSplitValue?: number; // אחוז כשבר עשרוני (0.3 = 30%), או סכום קבוע אם fixed
 }
 
 export interface SettlementInputTotals {
@@ -21,7 +26,10 @@ export interface SettlementInputTotals {
 }
 
 export interface SettlementBreakdown extends SettlementInputTotals {
-  operatorBudget: number; // תקציב הפעלה למפעיל = הכנסה - הוצאות רשות
+  operatorBudget: number; // תקציב הפעלה למפעיל = הכנסה - חלק הרשות האפקטיבי
+  rashutShareEffective: number; // חלק הרשות שבו בפועל נעשה שימוש בנוסחה (ראו rashutSplitType/Value)
+  rashutSplitType?: 'percentage' | 'fixed';
+  rashutSplitValue?: number;
   overheadPct: number;
   overheadAmount: number;
   advancePct: number;
@@ -34,7 +42,18 @@ export function calculateSettlement(
   totals: SettlementInputTotals,
   params: SettlementParams
 ): SettlementBreakdown {
-  const operatorBudget = totals.incomeTotal - totals.rashutExpensesTotal;
+  // חלק הרשות בפועל = המקסימום בין הוצאות הרשות שנטענו בפועל לבין החלק המוצהר
+  // (אחוז מההכנסה, או סכום קבוע) — "רצפה" שמבטיחה לרשות לפחות את המוצהר, גם אם
+  // בפועל טרם הוציאה את כל הסכום; אם ההוצאה בפועל גבוהה יותר, היא זו שקובעת.
+  const declaredRashutShare =
+    params.rashutSplitType === 'fixed'
+      ? (params.rashutSplitValue ?? 0)
+      : params.rashutSplitType === 'percentage'
+        ? (params.rashutSplitValue ?? 0) * totals.incomeTotal
+        : 0;
+  const rashutShareEffective = Math.max(totals.rashutExpensesTotal, declaredRashutShare);
+
+  const operatorBudget = totals.incomeTotal - rashutShareEffective;
   const overheadAmount = params.overheadPct * totals.operatorExpensesTotal;
   const advanceAmount = params.advancePct * operatorBudget;
 
@@ -49,6 +68,9 @@ export function calculateSettlement(
   return {
     ...totals,
     operatorBudget,
+    rashutShareEffective,
+    rashutSplitType: params.rashutSplitType,
+    rashutSplitValue: params.rashutSplitValue,
     overheadPct: params.overheadPct,
     overheadAmount,
     advancePct: params.advancePct,

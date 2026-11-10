@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
-import ExpenseUpload from '@/app/components/ExpenseUpload';
+import ExpenseUpload, { type ExpenseKind } from '@/app/components/ExpenseUpload';
 
 type ModelType = 'self' | 'operator' | 'joint';
 
@@ -32,6 +32,9 @@ interface Breakdown {
   parentPaymentsTotal: number;
   previouslyPaidTotal: number;
   operatorBudget: number;
+  rashutShareEffective: number;
+  rashutSplitType?: 'percentage' | 'fixed';
+  rashutSplitValue?: number;
   overheadPct: number;
   overheadAmount: number;
   advancePct: number;
@@ -44,6 +47,8 @@ interface ParamRecord {
   _id: string;
   overhead_pct: number;
   advance_pct: number;
+  rashut_split_type?: 'percentage' | 'fixed';
+  rashut_split_value?: number;
   effective_from: string;
   created_by: string;
 }
@@ -74,6 +79,7 @@ export default function ProjectDetailPage() {
 
   const [project, setProject] = useState<ProjectRecord | null>(null);
   const [tab, setTab] = useState<Tab>('מצב נוכחי');
+  const [expenseKind, setExpenseKind] = useState<ExpenseKind>('operator_expense');
   const [error, setError] = useState('');
 
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
@@ -83,6 +89,8 @@ export default function ProjectDetailPage() {
   const [newOverhead, setNewOverhead] = useState('');
   const [newAdvance, setNewAdvance] = useState('');
   const [newEffective, setNewEffective] = useState('');
+  const [newRashutSplitType, setNewRashutSplitType] = useState<'none' | 'percentage' | 'fixed'>('none');
+  const [newRashutSplitValue, setNewRashutSplitValue] = useState('');
   const [savingParams, setSavingParams] = useState(false);
 
   const [creatingRun, setCreatingRun] = useState(false);
@@ -149,11 +157,21 @@ export default function ProjectDetailPage() {
       const res = await fetch(`/api/projects/${id}/params`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ overhead_pct: Number(newOverhead) / 100, advance_pct: Number(newAdvance) / 100, effective_from: newEffective }),
+        body: JSON.stringify({
+          overhead_pct: Number(newOverhead) / 100,
+          advance_pct: Number(newAdvance) / 100,
+          effective_from: newEffective,
+          ...(newRashutSplitType !== 'none'
+            ? {
+                rashut_split_type: newRashutSplitType,
+                rashut_split_value: newRashutSplitType === 'percentage' ? Number(newRashutSplitValue) / 100 : Number(newRashutSplitValue),
+              }
+            : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? 'שגיאה');
-      setNewOverhead(''); setNewAdvance(''); setNewEffective('');
+      setNewOverhead(''); setNewAdvance(''); setNewEffective(''); setNewRashutSplitType('none'); setNewRashutSplitValue('');
       loadParams();
       loadBreakdown();
     } catch (e) {
@@ -260,7 +278,18 @@ export default function ProjectDetailPage() {
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
             <Row label="הכנסה ממשרד החינוך" value={breakdown.incomeTotal} />
-            {project.model === 'joint' && <Row label="הוצאות רשות" value={-breakdown.rashutExpensesTotal} />}
+            {project.model === 'joint' && (
+              <>
+                <Row label="הוצאות רשות (בפועל)" value={-breakdown.rashutExpensesTotal} />
+                {breakdown.rashutSplitType && (
+                  <Row
+                    label={`חלק רשות מוצהר (${breakdown.rashutSplitType === 'percentage' ? `${(breakdown.rashutSplitValue! * 100).toFixed(1)}%` : 'סכום קבוע'})`}
+                    value={-(breakdown.rashutSplitType === 'fixed' ? breakdown.rashutSplitValue! : breakdown.rashutSplitValue! * breakdown.incomeTotal)}
+                  />
+                )}
+                <Row label="חלק רשות בפועל בחישוב (רצפה)" value={-breakdown.rashutShareEffective} />
+              </>
+            )}
             <Row label="תקציב הפעלה למפעיל" value={breakdown.operatorBudget} strong />
             <Row label="הוצאות מפעיל בפועל" value={breakdown.operatorExpensesTotal} />
             <Row label={`תקורה (${(breakdown.overheadPct * 100).toFixed(1)}%)`} value={breakdown.overheadAmount} />
@@ -289,6 +318,24 @@ export default function ProjectDetailPage() {
                 <label className="block text-xs text-[#636c76] mb-1">תחולה מתאריך</label>
                 <input required type="date" value={newEffective} onChange={(e) => setNewEffective(e.target.value)} className="w-full border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
               </div>
+              {project.model === 'joint' && (
+                <div className="col-span-2 sm:col-span-4 flex items-end gap-3 pt-1 border-t border-[#d1d9e0] mt-1">
+                  <div>
+                    <label className="block text-xs text-[#636c76] mb-1">חלק הרשות (רצפה, להפעלה משותפת)</label>
+                    <select value={newRashutSplitType} onChange={(e) => setNewRashutSplitType(e.target.value as 'none' | 'percentage' | 'fixed')} className="border border-[#d1d9e0] rounded px-2 py-1.5 text-sm bg-white">
+                      <option value="none">לפי הוצאות רשות בפועל בלבד</option>
+                      <option value="percentage">אחוז מההכנסה</option>
+                      <option value="fixed">סכום קבוע</option>
+                    </select>
+                  </div>
+                  {newRashutSplitType !== 'none' && (
+                    <div>
+                      <label className="block text-xs text-[#636c76] mb-1">{newRashutSplitType === 'percentage' ? 'אחוז (%)' : 'סכום (₪)'}</label>
+                      <input required type="number" step="0.1" value={newRashutSplitValue} onChange={(e) => setNewRashutSplitValue(e.target.value)} className="w-32 border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex items-end">
                 <button type="submit" disabled={savingParams} className="px-4 py-1.5 bg-[#0969da] text-white text-sm font-medium rounded-lg hover:bg-[#0860ca] disabled:opacity-60">
                   {savingParams ? 'שומר...' : 'הוסף'}
@@ -303,17 +350,25 @@ export default function ProjectDetailPage() {
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">תחולה מתאריך</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">תקורה</th>
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מקדמה</th>
+                  {project.model === 'joint' && <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חלק הרשות</th>}
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">ע&quot;י</th>
                 </tr>
               </thead>
               <tbody>
                 {params.length === 0 ? (
-                  <tr><td colSpan={4} className="px-4 py-4 text-center text-xs text-[#636c76]">אין פרמטרים מוגדרים</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-4 text-center text-xs text-[#636c76]">אין פרמטרים מוגדרים</td></tr>
                 ) : params.map((p) => (
                   <tr key={p._id} className="border-b border-[#f0f3f6]">
                     <td className="px-4 py-2 text-[#1f2328]">{new Date(p.effective_from).toLocaleDateString('he-IL')}</td>
                     <td className="px-4 py-2 text-[#636c76]">{(p.overhead_pct * 100).toFixed(1)}%</td>
                     <td className="px-4 py-2 text-[#636c76]">{(p.advance_pct * 100).toFixed(1)}%</td>
+                    {project.model === 'joint' && (
+                      <td className="px-4 py-2 text-[#636c76]">
+                        {p.rashut_split_type === 'percentage' ? `${((p.rashut_split_value ?? 0) * 100).toFixed(1)}% מההכנסה (רצפה)`
+                          : p.rashut_split_type === 'fixed' ? `${money(p.rashut_split_value ?? 0)} ₪ (רצפה)`
+                          : 'לפי הוצאות בפועל בלבד'}
+                      </td>
+                    )}
                     <td className="px-4 py-2 text-[#636c76] text-xs" dir="ltr">{p.created_by}</td>
                   </tr>
                 ))}
@@ -323,16 +378,36 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {tab === 'הוצאות וקיזוזים' && (
-        <div className="space-y-4">
-          <ExpenseUpload projectId={id} kind="operator_expense" label="הוצאות מפעיל" canEdit={canManage || role === 'operator'} locked={locked} />
-          {project.model === 'joint' && (
-            <ExpenseUpload projectId={id} kind="rashut_expense" label="הוצאות רשות" canEdit={canManage} locked={locked} />
-          )}
-          <ExpenseUpload projectId={id} kind="reservation" label="שיריונים (קיזוז)" canEdit={canManage} locked={locked} />
-          <ExpenseUpload projectId={id} kind="parent_payment" label="כספי הורים (קיזוז)" canEdit={canManage} locked={locked} />
-        </div>
-      )}
+      {tab === 'הוצאות וקיזוזים' && (() => {
+        const kindOptions: { kind: ExpenseKind; label: string; canEdit: boolean }[] = [
+          { kind: 'operator_expense', label: 'הוצאות מפעיל', canEdit: canManage || role === 'operator' },
+          ...(project.model === 'joint' ? [{ kind: 'rashut_expense' as ExpenseKind, label: 'הוצאות רשות', canEdit: canManage }] : []),
+          { kind: 'reservation', label: 'שיריונים (קיזוז)', canEdit: canManage },
+          { kind: 'parent_payment', label: 'כספי הורים (קיזוז)', canEdit: canManage },
+        ];
+        const current = kindOptions.find((k) => k.kind === expenseKind) ?? kindOptions[0];
+        return (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-[#636c76] mb-1">איזה סוג הוצאה טוענים כרגע?</label>
+              <div className="flex gap-2 flex-wrap">
+                {kindOptions.map((k) => (
+                  <button
+                    key={k.kind}
+                    onClick={() => setExpenseKind(k.kind)}
+                    className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                      expenseKind === k.kind ? 'bg-[#0969da] text-white border-[#0969da]' : 'bg-white text-[#636c76] border-[#d1d9e0] hover:bg-[#f0f3f6]'
+                    }`}
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ExpenseUpload projectId={id} kind={current.kind} label={current.label} canEdit={current.canEdit} locked={locked} />
+          </div>
+        );
+      })()}
 
       {tab === 'דוחות התחשבנות' && (
         <div className="space-y-4">
