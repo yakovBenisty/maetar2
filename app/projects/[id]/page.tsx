@@ -43,6 +43,25 @@ interface Breakdown {
   operatorBudgetIsNegative: boolean;
 }
 
+interface CheshbonitAdvanceRow {
+  _id: string;
+  code: string;
+  calcMonth: string | null;
+  tachMonth: string | null;
+  amount: number;
+  isDeduction: boolean;
+}
+
+interface YadaniimAdvanceRow {
+  _id: string;
+  code: string;
+  calcMonth: string | null;
+  tachMonth: string | null;
+  amount: number;
+  reason: string | null;
+  matched: boolean;
+}
+
 interface ParamRecord {
   _id: string;
   overhead_pct: number;
@@ -66,7 +85,7 @@ function money(n: number): string {
   return n.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-const TABS = ['מצב נוכחי', 'פרמטרים', 'הוצאות וקיזוזים', 'דוחות התחשבנות'] as const;
+const TABS = ['מצב נוכחי', 'הכנסות משרד החינוך', 'פרמטרים', 'הוצאות וקיזוזים', 'דוחות התחשבנות'] as const;
 type Tab = typeof TABS[number];
 
 export default function ProjectDetailPage() {
@@ -74,7 +93,8 @@ export default function ProjectDetailPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const role = session?.user?.role;
-  const canManage = role === 'admin' || role === 'program_manager';
+  const isSuperAdmin = role === 'super_admin';
+  const canManage = role === 'admin' || isSuperAdmin || role === 'program_manager';
   const hasAccess = canManage || role === 'operator';
 
   const [project, setProject] = useState<ProjectRecord | null>(null);
@@ -83,6 +103,10 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState('');
 
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
+  const [cheshbonitRows, setCheshbonitRows] = useState<CheshbonitAdvanceRow[]>([]);
+  const [yadaniimRows, setYadaniimRows] = useState<YadaniimAdvanceRow[]>([]);
+  const [unmatchedAdvanceTotal, setUnmatchedAdvanceTotal] = useState(0);
+  const [loadingIncome, setLoadingIncome] = useState(false);
   const [params, setParams] = useState<ParamRecord[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
 
@@ -92,6 +116,13 @@ export default function ProjectDetailPage() {
   const [newRashutSplitType, setNewRashutSplitType] = useState<'none' | 'percentage' | 'fixed'>('none');
   const [newRashutSplitValue, setNewRashutSplitValue] = useState('');
   const [savingParams, setSavingParams] = useState(false);
+
+  const [editingParamId, setEditingParamId] = useState<string | null>(null);
+  const [editOverhead, setEditOverhead] = useState('');
+  const [editAdvance, setEditAdvance] = useState('');
+  const [editEffective, setEditEffective] = useState('');
+  const [editRashutSplitType, setEditRashutSplitType] = useState<'none' | 'percentage' | 'fixed'>('none');
+  const [editRashutSplitValue, setEditRashutSplitValue] = useState('');
 
   const [creatingRun, setCreatingRun] = useState(false);
   const [editingRunId, setEditingRunId] = useState<string | null>(null);
@@ -116,6 +147,21 @@ export default function ProjectDetailPage() {
     if (res.ok) setBreakdown(data.breakdown);
   }, [id]);
 
+  const loadIncome = useCallback(async () => {
+    setLoadingIncome(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/income`);
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setCheshbonitRows(data.cheshbonitRows ?? []);
+        setYadaniimRows(data.yadaniimRows ?? []);
+        setUnmatchedAdvanceTotal(data.unmatchedAdvanceTotal ?? 0);
+      }
+    } finally {
+      setLoadingIncome(false);
+    }
+  }, [id]);
+
   const loadParams = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/params`);
     const data = await res.json();
@@ -132,10 +178,11 @@ export default function ProjectDetailPage() {
     if (hasAccess && id) {
       loadProject();
       loadBreakdown();
+      loadIncome();
       loadParams();
       loadRuns();
     }
-  }, [hasAccess, id, loadProject, loadBreakdown, loadParams, loadRuns]);
+  }, [hasAccess, id, loadProject, loadBreakdown, loadIncome, loadParams, loadRuns]);
 
   async function toggleLock() {
     if (!project) return;
@@ -178,6 +225,58 @@ export default function ProjectDetailPage() {
       setError(e instanceof Error ? e.message : 'שגיאה');
     } finally {
       setSavingParams(false);
+    }
+  }
+
+  function openEditParam(p: ParamRecord) {
+    setEditingParamId(p._id);
+    setEditOverhead(String(p.overhead_pct * 100));
+    setEditAdvance(String(p.advance_pct * 100));
+    setEditEffective(new Date(p.effective_from).toISOString().slice(0, 10));
+    if (p.rashut_split_type) {
+      setEditRashutSplitType(p.rashut_split_type);
+      setEditRashutSplitValue(p.rashut_split_type === 'percentage' ? String((p.rashut_split_value ?? 0) * 100) : String(p.rashut_split_value ?? 0));
+    } else {
+      setEditRashutSplitType('none');
+      setEditRashutSplitValue('');
+    }
+  }
+
+  async function handleSaveParamEdit() {
+    if (!editingParamId) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/params/${editingParamId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          overhead_pct: Number(editOverhead) / 100,
+          advance_pct: Number(editAdvance) / 100,
+          effective_from: editEffective,
+          ...(editRashutSplitType !== 'none'
+            ? { rashut_split_type: editRashutSplitType, rashut_split_value: editRashutSplitType === 'percentage' ? Number(editRashutSplitValue) / 100 : Number(editRashutSplitValue) }
+            : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'שגיאה');
+      setEditingParamId(null);
+      loadParams();
+      loadBreakdown();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שגיאה');
+    }
+  }
+
+  async function handleDeleteParam(paramId: string) {
+    if (!confirm('למחוק רשומת פרמטרים זו? פעולה זו אינה הפיכה.')) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/params/${paramId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'שגיאה במחיקה');
+      loadParams();
+      loadBreakdown();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שגיאה');
     }
   }
 
@@ -302,6 +401,96 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {tab === 'הכנסות משרד החינוך' && (
+        <div className="space-y-4">
+          <p className="text-xs text-[#636c76]">
+            הכנסה ממשרד החינוך (CHESHBONIT) + מקדמות מ&quot;ידניים&quot; (YADANIIM) שלא קיבלו שורה חיובית מקבילה בחשבוניות
+            (כאלה מסומנות &quot;לא תואם&quot; ומתווספות להכנסה בחישוב). בד&quot;כ מקדמה ב-YADANIIM מתאזנת מול &quot;ניכוי מקדמה&quot; בחשבוניות.
+          </p>
+
+          {loadingIncome ? (
+            <div className="p-8 text-center text-sm text-[#636c76]">טוען...</div>
+          ) : (
+            <>
+              <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+                <div className="px-6 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa]">
+                  <h3 className="text-sm font-semibold text-[#1f2328]">חשבוניות (CHESHBONIT) — שורות מקדמה</h3>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[#f6f8fa] border-b border-[#d1d9e0] text-right">
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">קוד נושא</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חודש חישוב</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חודש תחולה</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סכום</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סוג</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cheshbonitRows.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-4 text-center text-xs text-[#636c76]">אין שורות מקדמה בחשבוניות</td></tr>
+                    ) : cheshbonitRows.map((r) => (
+                      <tr key={r._id} className="border-b border-[#f0f3f6]">
+                        <td className="px-4 py-2 text-[#1f2328]">{r.code}</td>
+                        <td className="px-4 py-2 text-[#636c76]">{r.calcMonth}</td>
+                        <td className="px-4 py-2 text-[#636c76]">{r.tachMonth}</td>
+                        <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.amount)}</td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${r.isDeduction ? 'bg-[#ffebe9] text-[#cf222e]' : 'bg-[#dafbe1] text-[#1a7f37]'}`}>
+                            {r.isDeduction ? 'ניכוי מקדמה' : 'מקדמה'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+                <div className="px-6 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa]">
+                  <h3 className="text-sm font-semibold text-[#1f2328]">ידניים (YADANIIM) — מקדמות</h3>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[#f6f8fa] border-b border-[#d1d9e0] text-right">
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">קוד נושא</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חודש חישוב</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חודש תחולה</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סכום</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סיבה</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">התאמה</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yadaniimRows.length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-4 text-center text-xs text-[#636c76]">אין מקדמות ב-ידניים</td></tr>
+                    ) : yadaniimRows.map((r) => (
+                      <tr key={r._id} className={`border-b border-[#f0f3f6] ${!r.matched ? 'bg-[#fff8c5]' : ''}`}>
+                        <td className="px-4 py-2 text-[#1f2328]">{r.code}</td>
+                        <td className="px-4 py-2 text-[#636c76]">{r.calcMonth}</td>
+                        <td className="px-4 py-2 text-[#636c76]">{r.tachMonth}</td>
+                        <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.amount)}</td>
+                        <td className="px-4 py-2 text-[#636c76] text-xs">{r.reason}</td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${r.matched ? 'bg-[#dafbe1] text-[#1a7f37]' : 'bg-[#fff8c5] text-[#9a6700]'}`}>
+                            {r.matched ? 'תואם בחשבוניות' : 'לא תואם — מתווסף להכנסה'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-4 bg-[#ddf4ff] border border-[#0969da] rounded-xl flex items-center justify-between">
+                <span className="text-sm font-medium text-[#1f2328]">סה&quot;כ מקדמות שלא תואמו ונוספו להכנסה</span>
+                <span className="text-lg font-bold text-[#0969da] font-mono">{money(unmatchedAdvanceTotal)} ₪</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {tab === 'פרמטרים' && (
         <div className="space-y-4">
           {canManage && !locked && (
@@ -352,29 +541,72 @@ export default function ProjectDetailPage() {
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מקדמה</th>
                   {project.model === 'joint' && <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חלק הרשות</th>}
                   <th className="px-4 py-2 text-xs font-medium text-[#636c76]">ע&quot;י</th>
+                  {isSuperAdmin && <th className="px-4 py-2"></th>}
                 </tr>
               </thead>
               <tbody>
                 {params.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-4 text-center text-xs text-[#636c76]">אין פרמטרים מוגדרים</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-4 text-center text-xs text-[#636c76]">אין פרמטרים מוגדרים</td></tr>
                 ) : params.map((p) => (
-                  <tr key={p._id} className="border-b border-[#f0f3f6]">
-                    <td className="px-4 py-2 text-[#1f2328]">{new Date(p.effective_from).toLocaleDateString('he-IL')}</td>
-                    <td className="px-4 py-2 text-[#636c76]">{(p.overhead_pct * 100).toFixed(1)}%</td>
-                    <td className="px-4 py-2 text-[#636c76]">{(p.advance_pct * 100).toFixed(1)}%</td>
-                    {project.model === 'joint' && (
-                      <td className="px-4 py-2 text-[#636c76]">
-                        {p.rashut_split_type === 'percentage' ? `${((p.rashut_split_value ?? 0) * 100).toFixed(1)}% מההכנסה (רצפה)`
-                          : p.rashut_split_type === 'fixed' ? `${money(p.rashut_split_value ?? 0)} ₪ (רצפה)`
-                          : 'לפי הוצאות בפועל בלבד'}
+                  editingParamId === p._id ? (
+                    <tr key={p._id} className="border-b border-[#f0f3f6] bg-[#fff8c5]">
+                      <td className="px-4 py-2"><input type="date" value={editEffective} onChange={(e) => setEditEffective(e.target.value)} className="w-32 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" /></td>
+                      <td className="px-4 py-2"><input type="number" step="0.1" value={editOverhead} onChange={(e) => setEditOverhead(e.target.value)} className="w-16 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />%</td>
+                      <td className="px-4 py-2"><input type="number" step="0.1" value={editAdvance} onChange={(e) => setEditAdvance(e.target.value)} className="w-16 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />%</td>
+                      {project.model === 'joint' && (
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-1">
+                            <select value={editRashutSplitType} onChange={(e) => setEditRashutSplitType(e.target.value as 'none' | 'percentage' | 'fixed')} className="border border-[#d1d9e0] rounded px-1 py-0.5 text-xs bg-white">
+                              <option value="none">בפועל בלבד</option>
+                              <option value="percentage">אחוז</option>
+                              <option value="fixed">סכום</option>
+                            </select>
+                            {editRashutSplitType !== 'none' && (
+                              <input type="number" step="0.1" value={editRashutSplitValue} onChange={(e) => setEditRashutSplitValue(e.target.value)} className="w-16 border border-[#d1d9e0] rounded px-1 py-0.5 text-xs" />
+                            )}
+                          </div>
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-[#636c76] text-xs" dir="ltr">{p.created_by}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex gap-2">
+                          <button onClick={handleSaveParamEdit} className="text-xs text-[#1a7f37]">שמור</button>
+                          <button onClick={() => setEditingParamId(null)} className="text-xs text-[#636c76]">ביטול</button>
+                        </div>
                       </td>
-                    )}
-                    <td className="px-4 py-2 text-[#636c76] text-xs" dir="ltr">{p.created_by}</td>
-                  </tr>
+                    </tr>
+                  ) : (
+                    <tr key={p._id} className="border-b border-[#f0f3f6]">
+                      <td className="px-4 py-2 text-[#1f2328]">{new Date(p.effective_from).toLocaleDateString('he-IL')}</td>
+                      <td className="px-4 py-2 text-[#636c76]">{(p.overhead_pct * 100).toFixed(1)}%</td>
+                      <td className="px-4 py-2 text-[#636c76]">{(p.advance_pct * 100).toFixed(1)}%</td>
+                      {project.model === 'joint' && (
+                        <td className="px-4 py-2 text-[#636c76]">
+                          {p.rashut_split_type === 'percentage' ? `${((p.rashut_split_value ?? 0) * 100).toFixed(1)}% מההכנסה (רצפה)`
+                            : p.rashut_split_type === 'fixed' ? `${money(p.rashut_split_value ?? 0)} ₪ (רצפה)`
+                            : 'לפי הוצאות בפועל בלבד'}
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-[#636c76] text-xs" dir="ltr">{p.created_by}</td>
+                      {isSuperAdmin && (
+                        <td className="px-4 py-2">
+                          <div className="flex gap-2">
+                            <button onClick={() => openEditParam(p)} className="text-xs text-[#0969da] hover:underline">ערוך</button>
+                            <button onClick={() => handleDeleteParam(p._id)} className="text-xs text-[#cf222e] hover:underline">מחק</button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  )
                 ))}
               </tbody>
             </table>
           </div>
+          {isSuperAdmin && (
+            <p className="text-xs text-[#9a6700]">
+              עריכה/מחיקה של פרמטרים זמינה לך כמנהל על — זו חריגה מהעיקרון שהיסטוריית פרמטרים לא נערכת רטרואקטיבית, מיועדת לתיקון טעויות בלבד.
+            </p>
+          )}
         </div>
       )}
 

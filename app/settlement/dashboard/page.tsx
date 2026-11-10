@@ -25,7 +25,7 @@ function money(n: number): string {
 export default function SettlementDashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const canManage = session?.user?.role === 'admin' || session?.user?.role === 'program_manager';
+  const canManage = session?.user?.role === 'admin' || session?.user?.role === 'super_admin' || session?.user?.role === 'program_manager';
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);

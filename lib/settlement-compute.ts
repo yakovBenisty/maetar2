@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { getDb } from './mongo';
 import { getActiveParams } from './project-params';
 import { calculateSettlement, type SettlementBreakdown } from './settlement';
+import { getIncomeBreakdown } from './income-matching';
 import type { ExpenseKind } from '@/app/api/expenses/mappings/route';
 
 export interface ProjectStatus {
@@ -45,7 +46,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
     return Number.isFinite(n) ? [c, n] : [c];
   });
 
-  const [incomeAgg, operatorExpensesTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, paidAgg, params] =
+  const [incomeAgg, unmatchedAdvances, operatorExpensesTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, paidAgg, params] =
     await Promise.all([
       nosemeCodes.length
         ? db
@@ -61,6 +62,9 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
             ])
             .toArray()
         : Promise.resolve([]),
+      // מקדמות ב-YADANIIM שלא קיבלו שורה חיובית מקבילה ב-CHESHBONIT — ההכנסה
+      // הזו מעולם לא נספרה ב-יתרת_ביצוע_החודש, ולכן מתווספת בנפרד (ראו lib/income-matching.ts).
+      getIncomeBreakdown(nosemeCodes, project.date_from, project.date_to),
       sumExpenseKind(db, projectId, 'operator_expense'),
       project.model === 'joint' ? sumExpenseKind(db, projectId, 'rashut_expense') : Promise.resolve(0),
       sumExpenseKind(db, projectId, 'reservation'),
@@ -77,7 +81,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
 
   const breakdown = calculateSettlement(
     {
-      incomeTotal: incomeAgg[0]?.total ?? 0,
+      incomeTotal: (incomeAgg[0]?.total ?? 0) + unmatchedAdvances.unmatchedAdvanceTotal,
       rashutExpensesTotal,
       operatorExpensesTotal,
       reservationsTotal,

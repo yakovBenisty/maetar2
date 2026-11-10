@@ -22,6 +22,7 @@ const navItems: NavItem[] = [
   { href: '/runs', label: 'היסטוריית ריצות', icon: '📋' },
   { href: '/rikhuz', label: 'דוח ריכוז', icon: '📑' },
   { href: '/reports', label: 'דוח PIVOT', icon: '📈' },
+  { href: '/reports/income', label: 'הכנסות משרד החינוך', icon: '💰' },
   { href: '/mapping', label: 'מיפוי נושאים', icon: '🗂️' },
   { href: '/audit',   label: 'דוח בקרה',    icon: '🔍' },
   { href: '/noseme', label: 'נושאים', icon: '🏷️' },
@@ -46,9 +47,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { data: session } = useSession();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
 
-  const isAdmin = session?.user?.role === 'admin';
+  const isAdmin = session?.user?.role === 'admin' || session?.user?.role === 'super_admin';
   const settlementRole = session?.user?.role;
-  const isSettlementManager = settlementRole === 'admin' || settlementRole === 'program_manager';
+  const isSettlementManager = settlementRole === 'admin' || settlementRole === 'super_admin' || settlementRole === 'program_manager';
   const hasSettlementAccess = isSettlementManager || settlementRole === 'operator';
   const displayName =
     session?.user?.firstName

@@ -57,7 +57,7 @@ export default function ProjectsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const role = session?.user?.role;
-  const canManage = role === 'admin' || role === 'program_manager';
+  const canManage = role === 'admin' || role === 'super_admin' || role === 'program_manager';
   const hasAccess = canManage || role === 'operator';
 
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -72,6 +72,10 @@ export default function ProjectsPage() {
   const [selectedOperatorId, setSelectedOperatorId] = useState('');
   const [addingOperator, setAddingOperator] = useState(false);
   const [newOperatorName, setNewOperatorName] = useState('');
+  const [overheadPct, setOverheadPct] = useState('');
+  const [advancePct, setAdvancePct] = useState('');
+  const [rashutSplitType, setRashutSplitType] = useState<'none' | 'percentage' | 'fixed'>('none');
+  const [rashutSplitValue, setRashutSplitValue] = useState('');
   const [newOperatorEmails, setNewOperatorEmails] = useState('');
 
   useEffect(() => {
@@ -114,6 +118,10 @@ export default function ProjectsPage() {
   function openAdd() {
     setForm(EMPTY_FORM);
     setSelectedOperatorId('');
+    setOverheadPct('');
+    setAdvancePct('');
+    setRashutSplitType('none');
+    setRashutSplitValue('');
     setShowForm(true);
     setError('');
   }
@@ -173,6 +181,24 @@ export default function ProjectsPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? 'שגיאה בשמירה');
+
+      // פרויקט חדש (לא עריכה) ועם נתוני פרמטרים ראשוניים — שומר רשומת PROJECT_PARAMS ראשונה,
+      // כך שלא צריך לעבור למסך הפרויקט בנפרד רק כדי להגדיר תקורה/מקדמה/חלוקת תקציב.
+      if (!form._id && (overheadPct || advancePct || rashutSplitType !== 'none')) {
+        await fetch(`/api/projects/${data.id}/params`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            overhead_pct: Number(overheadPct || 0) / 100,
+            advance_pct: Number(advancePct || 0) / 100,
+            effective_from: form.date_from,
+            ...(rashutSplitType !== 'none'
+              ? { rashut_split_type: rashutSplitType, rashut_split_value: rashutSplitType === 'percentage' ? Number(rashutSplitValue) / 100 : Number(rashutSplitValue) }
+              : {}),
+          }),
+        });
+      }
+
       setShowForm(false);
       load();
     } catch (e) {
@@ -290,6 +316,43 @@ export default function ProjectsPage() {
               <input required type="date" value={form.date_to} onChange={(e) => setForm({ ...form, date_to: e.target.value })}
                 className="w-full border border-[#d1d9e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]" />
             </div>
+            {!form._id && (
+              <div className="sm:col-span-2 border-t border-[#d1d9e0] pt-3 mt-1">
+                <p className="text-xs font-medium text-[#636c76] mb-2">פרמטרים ראשוניים (ניתן לשנות מאוחר יותר בעמוד הפרויקט)</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-[#636c76] mb-1">אחוז תקורה (%)</label>
+                    <input type="number" step="0.1" value={overheadPct} onChange={(e) => setOverheadPct(e.target.value)}
+                      className="w-full border border-[#d1d9e0] rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#636c76] mb-1">אחוז מקדמה (%)</label>
+                    <input type="number" step="0.1" value={advancePct} onChange={(e) => setAdvancePct(e.target.value)}
+                      className="w-full border border-[#d1d9e0] rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  {form.model === 'joint' && (
+                    <>
+                      <div>
+                        <label className="block text-xs text-[#636c76] mb-1">חלק הרשות (רצפה)</label>
+                        <select value={rashutSplitType} onChange={(e) => setRashutSplitType(e.target.value as 'none' | 'percentage' | 'fixed')}
+                          className="w-full border border-[#d1d9e0] rounded-lg px-2 py-1.5 text-sm bg-white">
+                          <option value="none">לפי הוצאות בפועל בלבד</option>
+                          <option value="percentage">אחוז מההכנסה</option>
+                          <option value="fixed">סכום קבוע</option>
+                        </select>
+                      </div>
+                      {rashutSplitType !== 'none' && (
+                        <div>
+                          <label className="block text-xs text-[#636c76] mb-1">{rashutSplitType === 'percentage' ? 'אחוז (%)' : 'סכום (₪)'}</label>
+                          <input type="number" step="0.1" value={rashutSplitValue} onChange={(e) => setRashutSplitValue(e.target.value)}
+                            className="w-full border border-[#d1d9e0] rounded-lg px-2 py-1.5 text-sm" />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="sm:col-span-2 flex gap-2 justify-end pt-2">
               <button type="button" onClick={() => setShowForm(false)}
                 className="px-4 py-2 text-sm text-[#636c76] border border-[#d1d9e0] rounded-lg hover:bg-[#f0f3f6] transition-colors">ביטול</button>

@@ -18,7 +18,7 @@ export default function OperatorReportPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const role = session?.user?.role;
-  const canManage = role === 'admin' || role === 'program_manager';
+  const canManage = role === 'admin' || role === 'super_admin' || role === 'program_manager';
   const hasAccess = canManage || role === 'operator';
 
   const [operatorEmail, setOperatorEmail] = useState('');

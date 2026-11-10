@@ -5,7 +5,8 @@ import { getDb } from '@/lib/mongo';
 
 function adminOnly(session: Session | null) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if ((session.user as { role?: string }).role !== 'admin')
+  const role = (session.user as { role?: string }).role;
+  if (role !== 'admin' && role !== 'super_admin')
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   return null;
 }
@@ -34,14 +35,18 @@ export async function POST(req: NextRequest) {
     email: string;
     firstName: string;
     lastName: string;
-    role: 'user' | 'admin' | 'program_manager' | 'operator';
+    role: 'user' | 'admin' | 'program_manager' | 'operator' | 'super_admin';
   };
 
   if (!email || !firstName || !lastName) {
     return NextResponse.json({ error: 'שדות חובה חסרים' }, { status: 400 });
   }
-  if (!['user', 'admin', 'program_manager', 'operator'].includes(role)) {
+  if (!['user', 'admin', 'program_manager', 'operator', 'super_admin'].includes(role)) {
     return NextResponse.json({ error: 'סוג משתמש לא תקין' }, { status: 400 });
+  }
+  // רק מנהל-על יכול להעניק/לשנות תפקיד מנהל-על — admin רגיל לא יכול "לקדם" את עצמו או אחרים.
+  if (role === 'super_admin' && (session?.user as { role?: string })?.role !== 'super_admin') {
+    return NextResponse.json({ error: 'רק מנהל על יכול להעניק הרשאת מנהל על' }, { status: 403 });
   }
 
   const db = await getDb();

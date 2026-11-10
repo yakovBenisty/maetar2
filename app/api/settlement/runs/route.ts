@@ -67,13 +67,17 @@ export async function POST(req: NextRequest) {
 
   const { breakdown } = await computeProjectStatus(body.project_id);
 
+  // ברירת מחדל: הדוח מופק כ"שולם במלואו" (תואם לזרימת העבודה הרגילה — תשלום
+  // מלא בעת ההפקה); ניתן לערוך בדיעבד אם בפועל שולם סכום אחר (תשלום חלקי).
+  const now = new Date();
+  const createdBy = session?.user?.email ?? '';
   const doc: SettlementRunDoc = {
     project_id: body.project_id,
     breakdown,
-    paid_total: 0,
-    paid_audit: [],
-    created_at: new Date(),
-    created_by: session?.user?.email ?? '',
+    paid_total: breakdown.calculatedTotal,
+    paid_audit: [{ amount: breakdown.calculatedTotal, note: 'ברירת מחדל: שולם במלואו בעת הפקת הדוח', updated_at: now, updated_by: createdBy }],
+    created_at: now,
+    created_by: createdBy,
   };
 
   const result = await db.collection('SETTLEMENT_RUNS').insertOne(doc);

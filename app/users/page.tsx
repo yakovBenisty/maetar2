@@ -4,9 +4,10 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 
-type UserRole = 'user' | 'admin' | 'program_manager' | 'operator';
+type UserRole = 'user' | 'admin' | 'program_manager' | 'operator' | 'super_admin';
 
 const ROLE_LABELS: Record<UserRole, string> = {
+  super_admin: 'מנהל על',
   admin: 'מנהל מערכת',
   program_manager: 'מנהל תוכנית',
   operator: 'מפעיל',
@@ -31,6 +32,8 @@ const EMPTY_FORM: Omit<UserRecord, 'createdAt'> = {
 export default function UsersPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const isAdmin = session?.user?.role === 'admin' || session?.user?.role === 'super_admin';
+  const isSuperAdmin = session?.user?.role === 'super_admin';
 
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,10 +48,10 @@ export default function UsersPage() {
   // Redirect non-admins
   useEffect(() => {
     if (status === 'loading') return;
-    if (session?.user?.role !== 'admin') {
+    if (!isAdmin) {
       router.replace('/');
     }
-  }, [session, status, router]);
+  }, [status, isAdmin, router]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -66,8 +69,8 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    if (session?.user?.role === 'admin') loadUsers();
-  }, [session, loadUsers]);
+    if (isAdmin) loadUsers();
+  }, [isAdmin, loadUsers]);
 
   function openAdd() {
     setForm(EMPTY_FORM);
@@ -123,7 +126,7 @@ export default function UsersPage() {
     }
   }
 
-  if (status === 'loading' || session?.user?.role !== 'admin') {
+  if (status === 'loading' || !isAdmin) {
     return <div className="p-8 text-[#636c76] text-sm">טוען...</div>;
   }
 
@@ -209,6 +212,7 @@ export default function UsersPage() {
                 <option value="program_manager">מנהל תוכנית</option>
                 <option value="operator">מפעיל</option>
                 <option value="admin">מנהל מערכת</option>
+                {isSuperAdmin && <option value="super_admin">מנהל על</option>}
               </select>
               <p className="text-xs text-[#8c959f] mt-1">
                 &quot;מנהל תוכנית&quot; ו&quot;מנהל מערכת&quot; מקבלים גישה מלאה למודול ההתחשבנות. &quot;מפעיל&quot; רואה רק פרויקטים שהוקצו לו (לפי כתובת המייל) במסך ניהול הפרויקטים.
@@ -263,11 +267,13 @@ export default function UsersPage() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                        u.role === 'admin' || u.role === 'program_manager'
-                          ? 'bg-[#ddf4ff] text-[#0969da]'
-                          : u.role === 'operator'
-                            ? 'bg-[#fff8c5] text-[#9a6700]'
-                            : 'bg-[#f0f3f6] text-[#636c76]'
+                        u.role === 'super_admin'
+                          ? 'bg-[#ffebe9] text-[#cf222e]'
+                          : u.role === 'admin' || u.role === 'program_manager'
+                            ? 'bg-[#ddf4ff] text-[#0969da]'
+                            : u.role === 'operator'
+                              ? 'bg-[#fff8c5] text-[#9a6700]'
+                              : 'bg-[#f0f3f6] text-[#636c76]'
                       }`}
                     >
                       {ROLE_LABELS[u.role] ?? u.role}
