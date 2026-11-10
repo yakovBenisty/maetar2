@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import ExpenseUpload, { type ExpenseKind } from '@/app/components/ExpenseUpload';
+import MultiSelectSearch from '@/app/components/MultiSelectSearch';
 
 type ModelType = 'self' | 'operator' | 'joint';
 
@@ -21,6 +22,10 @@ interface ProjectRecord {
   model: ModelType;
   operator_name: string;
   operator_emails: string[];
+  tabar_section: string;
+  noseme_codes: string[];
+  date_from: string;
+  date_to: string;
   status: 'open' | 'locked';
 }
 
@@ -153,6 +158,13 @@ export default function ProjectDetailPage() {
   const [editNote, setEditNote] = useState('');
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
+  const [nosemeOptions, setNosemeOptions] = useState<{ value: string; label: string }[]>([]);
+  const [editingScope, setEditingScope] = useState(false);
+  const [editNosemeCodes, setEditNosemeCodes] = useState<string[]>([]);
+  const [editDateFrom, setEditDateFrom] = useState('');
+  const [editDateTo, setEditDateTo] = useState('');
+  const [savingScope, setSavingScope] = useState(false);
+
   useEffect(() => {
     if (status === 'loading') return;
     if (!hasAccess) router.replace('/');
@@ -198,6 +210,12 @@ export default function ProjectDetailPage() {
     setRuns(data.runs ?? []);
   }, [id]);
 
+  const loadNoseme = useCallback(async () => {
+    const res = await fetch('/api/noseme');
+    const data = await res.json();
+    setNosemeOptions((data.noseme ?? []).map((n: { code: string; name?: string }) => ({ value: String(n.code), label: n.name ? `${n.code} — ${n.name}` : String(n.code) })));
+  }, []);
+
   useEffect(() => {
     if (hasAccess && id) {
       loadProject();
@@ -205,8 +223,50 @@ export default function ProjectDetailPage() {
       loadIncome();
       loadParams();
       loadRuns();
+      loadNoseme();
     }
-  }, [hasAccess, id, loadProject, loadBreakdown, loadIncome, loadParams, loadRuns]);
+  }, [hasAccess, id, loadProject, loadBreakdown, loadIncome, loadParams, loadRuns, loadNoseme]);
+
+  function openEditScope() {
+    if (!project) return;
+    setEditNosemeCodes(project.noseme_codes ?? []);
+    setEditDateFrom((project.date_from ?? '').slice(0, 10));
+    setEditDateTo((project.date_to ?? '').slice(0, 10));
+    setEditingScope(true);
+  }
+
+  async function handleSaveScope() {
+    if (!project) return;
+    setSavingScope(true);
+    setError('');
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          _id: project._id,
+          name: project.name,
+          budget_year: project.budget_year,
+          model: project.model,
+          operator_name: project.operator_name,
+          operator_emails: project.operator_emails,
+          tabar_section: project.tabar_section,
+          noseme_codes: editNosemeCodes,
+          date_from: editDateFrom,
+          date_to: editDateTo,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'שגיאה');
+      setEditingScope(false);
+      loadProject();
+      loadBreakdown();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שגיאה');
+    } finally {
+      setSavingScope(false);
+    }
+  }
 
   async function toggleLock() {
     if (!project) return;
@@ -374,6 +434,56 @@ export default function ProjectDetailPage() {
             </button>
           )}
         </div>
+      </div>
+
+      <div className="mb-6 bg-white border border-[#d1d9e0] rounded-xl p-4">
+        {editingScope ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-[#636c76] mb-1">קודי נושא (CHESHBONIT)</label>
+              <MultiSelectSearch options={nosemeOptions} selected={editNosemeCodes} onChange={setEditNosemeCodes} placeholder="חפש קוד נושא..." />
+            </div>
+            <div className="flex gap-3">
+              <div>
+                <label className="block text-xs text-[#636c76] mb-1">תחולה מתאריך</label>
+                <input type="date" value={editDateFrom} onChange={(e) => setEditDateFrom(e.target.value)} className="border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-[#636c76] mb-1">תחולה עד תאריך</label>
+                <input type="date" value={editDateTo} onChange={(e) => setEditDateTo(e.target.value)} className="border border-[#d1d9e0] rounded px-2 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleSaveScope} disabled={savingScope} className="px-3 py-1.5 bg-[#0969da] text-white text-xs font-medium rounded-lg hover:bg-[#0860ca] disabled:opacity-60">
+                {savingScope ? 'שומר...' : 'שמור'}
+              </button>
+              <button onClick={() => setEditingScope(false)} className="px-3 py-1.5 text-xs border border-[#d1d9e0] rounded-lg hover:bg-[#f0f3f6]">ביטול</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-sm">
+              <span className="text-[#636c76]">קודי נושא: </span>
+              {project.noseme_codes?.length ? (
+                <span className="text-[#1f2328]">{project.noseme_codes.join(', ')}</span>
+              ) : (
+                <span className="text-[#9a6700]">לא הוגדרו</span>
+              )}
+              <span className="text-[#636c76] mx-2">·</span>
+              <span className="text-[#636c76]">תחולה: </span>
+              {project.date_from && project.date_to ? (
+                <span className="text-[#1f2328]">
+                  {new Date(project.date_from).toLocaleDateString('he-IL')} – {new Date(project.date_to).toLocaleDateString('he-IL')}
+                </span>
+              ) : (
+                <span className="text-[#9a6700]">לא הוגדרה</span>
+              )}
+            </div>
+            {canManage && (
+              <button onClick={openEditScope} className="text-xs text-[#0969da] hover:underline whitespace-nowrap">ערוך</button>
+            )}
+          </div>
+        )}
       </div>
 
       {error && <div className="mb-4 p-3 bg-[#fff0f0] border border-[#ffb3b3] rounded-lg text-sm text-[#cf222e]">{error}</div>}
