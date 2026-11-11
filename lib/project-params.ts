@@ -21,7 +21,7 @@ export async function getActiveParams(
   const doc = await db
     .collection('PROJECT_PARAMS')
     .find({ project_id: projectId, effective_from: { $lte: asOf } })
-    .sort({ effective_from: -1 })
+    .sort({ effective_from: -1, created_at: -1 })
     .limit(1)
     .next();
 

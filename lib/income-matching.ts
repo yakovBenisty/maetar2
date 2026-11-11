@@ -45,8 +45,9 @@ export async function getIncomeBreakdown(
   cheshbonitRows: CheshbonitAdvanceRow[];
   yadaniimRows: YadaniimAdvanceRow[];
   unmatchedAdvanceTotal: number;
+  manualAdvanceTotal: number;
 }> {
-  if (noseCodes.length === 0) return { cheshbonitRows: [], yadaniimRows: [], unmatchedAdvanceTotal: 0 };
+  if (noseCodes.length === 0) return { cheshbonitRows: [], yadaniimRows: [], unmatchedAdvanceTotal: 0, manualAdvanceTotal: 0 };
 
   const db = await getDb();
   const variants = codeVariants(noseCodes);
@@ -100,5 +101,11 @@ export async function getIncomeBreakdown(
 
   const unmatchedAdvanceTotal = yadaniimRows.filter((r) => !r.matched).reduce((sum, r) => sum + r.amount, 0);
 
-  return { cheshbonitRows, yadaniimRows, unmatchedAdvanceTotal };
+  // גיליונות ההתחשבנות מוסיפים להכנסה את כל שורות "מקדמה ידנית" (SUMIFS לפי סוג_תשלום),
+  // בלי תנאי התאמה — זה הסכום שנכנס לחישוב; סימון ה"תואם" נשאר להצגה/ביקורת בלבד.
+  const manualAdvanceTotal = yadDocs
+    .filter((d) => String(d.סוג_תשלום ?? '').trim() === 'מקדמה ידנית')
+    .reduce((sum, d) => sum + (Number(d.סכום_מחושב) || 0), 0);
+
+  return { cheshbonitRows, yadaniimRows, unmatchedAdvanceTotal, manualAdvanceTotal };
 }

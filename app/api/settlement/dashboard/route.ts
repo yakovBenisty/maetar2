@@ -13,7 +13,7 @@ export async function GET() {
   const db = await getDb();
   const projects = await db
     .collection('PROJECTS')
-    .find({})
+    .find({ status: { $ne: 'locked' } })
     .sort({ budget_year: -1, name: 1 })
     .toArray();
 

@@ -29,7 +29,7 @@ interface ExpenseEntry {
   tax_id: string;
   tz: string;
   salary_month: string;
-  source: 'file' | 'manual';
+  source: 'file' | 'manual' | 'legacy_opening';
   source_file: string | null;
   uploaded_by: string;
   uploaded_at: string;
@@ -463,12 +463,12 @@ export default function ExpenseUpload({ projectId, kind, label, canEdit, locked 
             <tbody>
               {entries.map((e) => (
                 <tr key={e._id} className="border-b border-[#f0f3f6] hover:bg-[#f6f8fa]">
-                  <td className="px-3 py-1.5 text-[#636c76]">{e.nature === 'salary' ? 'שכר' : 'חשבונית'}</td>
+                  <td className="px-3 py-1.5 text-[#636c76]">{e.source === 'legacy_opening' ? 'יתרת פתיחה' : e.nature === 'salary' ? 'שכר' : 'חשבונית'}</td>
                   <td className="px-3 py-1.5 text-[#636c76]">{e.nature === 'salary' ? e.salary_month : (e.date ? new Date(e.date).toLocaleDateString('he-IL') : '')}</td>
                   <td className="px-3 py-1.5 font-mono text-[#1f2328]">{Number(e.amount).toLocaleString('he-IL')}</td>
                   <td className="px-3 py-1.5 text-[#1f2328]">{e.description}</td>
-                  <td className="px-3 py-1.5 text-[#636c76]">{e.nature === 'salary' ? `ת.ז ${e.tz}` : `חשבונית ${e.invoice_number} · ח.פ ${e.tax_id}`}</td>
-                  <td className="px-3 py-1.5 text-[#636c76]">{e.source === 'manual' ? 'ידני' : e.source_file ?? 'קובץ'}</td>
+                  <td className="px-3 py-1.5 text-[#636c76]">{e.source === 'legacy_opening' ? '—' : e.nature === 'salary' ? `ת.ז ${e.tz}` : `חשבונית ${e.invoice_number} · ח.פ ${e.tax_id}`}</td>
+                  <td className="px-3 py-1.5 text-[#636c76]">{e.source === 'manual' ? 'ידני' : e.source === 'legacy_opening' ? 'גיליון ההתחשבנות' : e.source_file ?? 'קובץ'}</td>
                   {canEdit && !locked && (
                     <td className="px-3 py-1.5">
                       <button onClick={() => handleDeleteEntry(e._id)} className="text-[#cf222e] hover:underline">מחק</button>

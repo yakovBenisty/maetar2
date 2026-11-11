@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   const db = await getDb();
   const projects = await db
     .collection('PROJECTS')
-    .find({ operator_emails: operatorEmail })
+    .find({ operator_emails: operatorEmail, status: { $ne: 'locked' } })
     .sort({ budget_year: -1, name: 1 })
     .toArray();
 

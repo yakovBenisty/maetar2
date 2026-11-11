@@ -17,23 +17,33 @@ export interface SettlementParams {
 }
 
 export interface SettlementInputTotals {
-  incomeTotal: number; // סה"כ הכנסה ממשרד החינוך (CHESHBONIT.יתרת_ביצוע_החודש, לפי קודי נושא+טווח תאריכים)
-  rashutExpensesTotal: number; // הוצאות רשות (רק בהפעלה משותפת)
-  operatorExpensesTotal: number; // הוצאות מפעיל בפועל
+  // סה"כ התקבל ברשות: נושאי "זכות" ב-CHESHBONIT (לפי קודי נושא + תחולה) + מקדמות ידניות מ-YADANIIM.
+  incomeTotal: number;
+  // נושאי "חובה" (למשל 633 — ניצנים הזנה): המשרד מקזז אותם ישירות מהתשלום. בגיליונות
+  // ההתחשבנות הם מוצגים כהוצאת רשות ("ניצנים הזנה") ולא כהפחתת הכנסה — כך גם כאן.
+  ministryDeductionsTotal?: number;
+  rashutExpensesTotal: number; // הוצאות רשות שנטענו למערכת (ללא קיזוזי המשרד)
+  operatorExpensesTotal: number; // הוצאות מפעיל בפועל שעליהן מחושבת תקורה
+  // ביצוע מפעיל שכבר כולל תקורה (יתרת פתיחה שהועברה מגיליון ההתחשבנות) — לא מחושבת עליו תקורה נוספת.
+  operatorExecutionOpeningTotal?: number;
   reservationsTotal: number; // שיריונים
   parentPaymentsTotal: number; // כספי הורים
   previouslyPaidTotal: number; // סה"כ ששולם בפועל בכל הדוחות הקודמים לפרויקט זה
 }
 
 export interface SettlementBreakdown extends SettlementInputTotals {
+  ministryDeductionsTotal: number;
+  operatorExecutionOpeningTotal: number;
   operatorBudget: number; // תקציב הפעלה למפעיל = הכנסה - חלק הרשות האפקטיבי
-  rashutShareEffective: number; // חלק הרשות שבו בפועל נעשה שימוש בנוסחה (ראו rashutSplitType/Value)
+  rashutShareEffective: number; // חלק הרשות הכולל שנוכה מההכנסה: קיזוזי משרד + max(הוצאות רשות שנטענו, החלק המוצהר)
   rashutSplitType?: 'percentage' | 'fixed';
   rashutSplitValue?: number;
   overheadPct: number;
   overheadAmount: number;
   advancePct: number;
   advanceAmount: number;
+  executionTotal: number; // סה"כ לתשלום בגין ביצוע ותקורה (כולל יתרת פתיחה)
+  receivablePending: number; // "כספים שעדיין לא התקבלו": ביצוע שחורג מתקציב ההפעלה — לא משולם עד שיתקבל תקציב
   calculatedTotal: number; // יתרה לתשלום למפעיל בדוח הנוכחי
   operatorBudgetIsNegative: boolean; // תקציב הפעלה שלילי — מצריך התרעה במסך, לא חסימה
 }
@@ -42,31 +52,42 @@ export function calculateSettlement(
   totals: SettlementInputTotals,
   params: SettlementParams
 ): SettlementBreakdown {
-  // חלק הרשות בפועל = המקסימום בין הוצאות הרשות שנטענו בפועל לבין החלק המוצהר
-  // (אחוז מההכנסה, או סכום קבוע) — "רצפה" שמבטיחה לרשות לפחות את המוצהר, גם אם
-  // בפועל טרם הוציאה את כל הסכום; אם ההוצאה בפועל גבוהה יותר, היא זו שקובעת.
+  const ministryDeductionsTotal = totals.ministryDeductionsTotal ?? 0;
+  const operatorExecutionOpeningTotal = totals.operatorExecutionOpeningTotal ?? 0;
+
+  // החלק המוצהר של הרשות (אחוז, או סכום קבוע) הוא "רצפה" להוצאות הרשות עצמה — מעבר
+  // לקיזוזי המשרד. אחוז מחושב מההכנסה נטו (אחרי קיזוזי המשרד).
   const declaredRashutShare =
     params.rashutSplitType === 'fixed'
       ? (params.rashutSplitValue ?? 0)
       : params.rashutSplitType === 'percentage'
-        ? (params.rashutSplitValue ?? 0) * totals.incomeTotal
+        ? (params.rashutSplitValue ?? 0) * (totals.incomeTotal - ministryDeductionsTotal)
         : 0;
-  const rashutShareEffective = Math.max(totals.rashutExpensesTotal, declaredRashutShare);
+  const rashutShareEffective = ministryDeductionsTotal + Math.max(totals.rashutExpensesTotal, declaredRashutShare);
 
   const operatorBudget = totals.incomeTotal - rashutShareEffective;
   const overheadAmount = params.overheadPct * totals.operatorExpensesTotal;
-  const advanceAmount = params.advancePct * operatorBudget;
+  const executionTotal = operatorExecutionOpeningTotal + totals.operatorExpensesTotal + overheadAmount;
+
+  // נוסחאות גיליון ההתחשבנות ("סיכום דוח"):
+  //   מקדמה = אחוז המקדמה × יתרת התקציב שטרם בוצעה  (=IF((תקציב-ביצוע)>1,(תקציב-ביצוע)*אחוז,0))
+  //   כספים שלא התקבלו = MAX(ביצוע - כספי הורים - תקציב, 0)
+  const unexecutedBudget = operatorBudget - executionTotal;
+  const advanceAmount = unexecutedBudget > 1 ? params.advancePct * unexecutedBudget : 0;
+  const receivablePending = Math.max(executionTotal - totals.parentPaymentsTotal - operatorBudget, 0);
 
   const calculatedTotal =
-    totals.operatorExpensesTotal +
-    overheadAmount +
+    executionTotal +
     advanceAmount -
     totals.reservationsTotal -
     totals.parentPaymentsTotal -
+    receivablePending -
     totals.previouslyPaidTotal;
 
   return {
     ...totals,
+    ministryDeductionsTotal,
+    operatorExecutionOpeningTotal,
     operatorBudget,
     rashutShareEffective,
     rashutSplitType: params.rashutSplitType,
@@ -75,6 +96,8 @@ export function calculateSettlement(
     overheadAmount,
     advancePct: params.advancePct,
     advanceAmount,
+    executionTotal,
+    receivablePending,
     calculatedTotal,
     operatorBudgetIsNegative: operatorBudget < 0,
   };

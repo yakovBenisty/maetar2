@@ -66,7 +66,7 @@ export default function SettlementDashboardPage() {
     <div className="max-w-6xl">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-[#1f2328]">לוח ריכוז חוצה-נושאים</h1>
-        <p className="text-sm text-[#636c76] mt-0.5">מצב כל הפרויקטים — מחושב חי מהנתונים הקיימים</p>
+        <p className="text-sm text-[#636c76] mt-0.5">מצב הפרויקטים הפתוחים — מחושב חי מהנתונים הקיימים</p>
       </div>
 
       {error && <div className="mb-4 p-3 bg-[#fff0f0] border border-[#ffb3b3] rounded-lg text-sm text-[#cf222e]">{error}</div>}

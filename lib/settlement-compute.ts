@@ -20,12 +20,16 @@ export interface ProjectStatus {
 async function sumExpenseKind(
   db: Awaited<ReturnType<typeof getDb>>,
   projectId: string,
-  kind: ExpenseKind
+  kind: ExpenseKind,
+  overheadIncluded?: boolean
 ): Promise<number> {
+  // overhead_included מסמן שורת יתרת פתיחה שסכומה כבר כולל תקורה (ראו lib/settlement.ts).
+  const flagFilter =
+    overheadIncluded === undefined ? {} : overheadIncluded ? { overhead_included: true } : { overhead_included: { $ne: true } };
   const result = await db
     .collection('EXPENSE_ENTRIES')
     .aggregate([
-      { $match: { project_id: projectId, kind } },
+      { $match: { project_id: projectId, kind, ...flagFilter } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ])
     .toArray();
@@ -46,7 +50,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
     return Number.isFinite(n) ? [c, n] : [c];
   });
 
-  const [incomeAgg, unmatchedAdvances, operatorExpensesTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, allRuns, params] =
+  const [incomeByCode, nosemeDocs, advances, operatorExpensesTotal, operatorExecutionOpeningTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, allRuns, params] =
     await Promise.all([
       nosemeCodes.length
         ? db
@@ -58,41 +62,57 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
                   חודש_תחולה: { $gte: project.date_from, $lte: project.date_to },
                 },
               },
-              { $group: { _id: null, total: { $sum: '$יתרת_ביצוע_החודש' } } },
+              { $group: { _id: '$קוד_נושא', total: { $sum: '$יתרת_ביצוע_החודש' } } },
             ])
             .toArray()
         : Promise.resolve([]),
-      // מקדמות ב-YADANIIM שלא קיבלו שורה חיובית מקבילה ב-CHESHBONIT — ההכנסה
-      // הזו מעולם לא נספרה ב-יתרת_ביצוע_החודש, ולכן מתווספת בנפרד (ראו lib/income-matching.ts).
+      db.collection('NOSEME').find({ code: { $in: nosemeCodes } }, { projection: { code: 1, direction: 1 } }).toArray(),
+      // מקדמות ידניות ב-YADANIIM לא מופיעות כשורה חיובית ב-CHESHBONIT, ולכן מתווספות
+      // להכנסה בנפרד — בדיוק כמו בגיליונות ההתחשבנות (ראו lib/income-matching.ts).
       getIncomeBreakdown(nosemeCodes, project.date_from, project.date_to),
-      sumExpenseKind(db, projectId, 'operator_expense'),
+      sumExpenseKind(db, projectId, 'operator_expense', false),
+      sumExpenseKind(db, projectId, 'operator_expense', true),
       project.model === 'joint' ? sumExpenseKind(db, projectId, 'rashut_expense') : Promise.resolve(0),
       sumExpenseKind(db, projectId, 'reservation'),
       sumExpenseKind(db, projectId, 'parent_payment'),
       db
         .collection('SETTLEMENT_RUNS')
-        .find({ project_id: projectId }, { projection: { source: 1, paid_total: 1 } })
+        .find({ project_id: projectId }, { projection: { source: 1, paid_total: 1, snapshot_date: 1, created_at: 1 } })
         .toArray(),
       getActiveParams(projectId),
     ]);
 
-  // paid_total בדוחות legacy_import הוא "שולם מצטבר עד לאותו תאריך" כפי שדווח
-  // בגיליון המקור (לא תוספתי בין דוחות) — סכימה שלו עם שאר הדוחות ההיסטוריים
-  // תספור את אותו סכום פעמים רבות. "שולם מצטבר" רק גדל עם הזמן, לכן לוקחים
-  // את המקסימום מביניהם כ"נקודת הפתיחה", ומוסיפים לו רק את מה ששולם בפועל
-  // בדוחות החיים (שם paid_total הוא אכן תוספתי per-דוח, כמתוכנן).
-  const legacyPaidTotal = allRuns
+  // נושא שמוגדר "חובה" בטבלת הנושאים (למשל 633 — ניצנים הזנה) הוא קיזוז של המשרד ולא
+  // הכנסה: סכומו (שלילי בחשבוניות) מוצג כהוצאת רשות, כמו בגיליון, ולא מפחית את ההכנסה.
+  const debitCodes = new Set(nosemeDocs.filter((n) => n.direction === 'חובה').map((n) => String(n.code)));
+  let creditIncome = 0;
+  let ministryDeductionsTotal = 0;
+  for (const row of incomeByCode) {
+    if (debitCodes.has(String(row._id))) ministryDeductionsTotal -= row.total;
+    else creditIncome += row.total;
+  }
+
+  // paid_total בדוחות legacy_import הוא "שולם מצטבר עד לאותו תאריך" כפי שדווח בגיליון
+  // המקור (לא תוספתי בין דוחות), ולכן אסור לסכום אותו על פני הסנאפשוטים. הוא גם לא
+  // בהכרח עולה עם הזמן (בגיליונות יש תיקונים והחזרים), ולכן "נקודת הפתיחה" היא הסכום
+  // שבסנאפשוט ההיסטורי האחרון. לזה מתווסף מה ששולם בדוחות החיים (שם paid_total תוספתי).
+  const time = (r: Record<string, unknown>) =>
+    new Date((r.snapshot_date ?? r.created_at ?? 0) as string | number | Date).getTime();
+  const latestLegacy = allRuns
     .filter((r) => r.source === 'legacy_import')
-    .reduce((max, r) => Math.max(max, Number(r.paid_total) || 0), 0);
+    .reduce<(typeof allRuns)[number] | null>((latest, r) => (!latest || time(r) >= time(latest) ? r : latest), null);
+  const legacyPaidTotal = Number(latestLegacy?.paid_total) || 0;
   const livePaidTotal = allRuns
     .filter((r) => r.source !== 'legacy_import')
     .reduce((sum, r) => sum + (Number(r.paid_total) || 0), 0);
 
   const breakdown = calculateSettlement(
     {
-      incomeTotal: (incomeAgg[0]?.total ?? 0) + unmatchedAdvances.unmatchedAdvanceTotal,
+      incomeTotal: creditIncome + advances.manualAdvanceTotal,
+      ministryDeductionsTotal,
       rashutExpensesTotal,
       operatorExpensesTotal,
+      operatorExecutionOpeningTotal,
       reservationsTotal,
       parentPaymentsTotal,
       previouslyPaidTotal: legacyPaidTotal + livePaidTotal,

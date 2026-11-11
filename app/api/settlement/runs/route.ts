@@ -69,13 +69,15 @@ export async function POST(req: NextRequest) {
 
   // ברירת מחדל: הדוח מופק כ"שולם במלואו" (תואם לזרימת העבודה הרגילה — תשלום
   // מלא בעת ההפקה); ניתן לערוך בדיעבד אם בפועל שולם סכום אחר (תשלום חלקי).
+  // יתרה שלילית (המפעיל קיבל יותר מהמגיע) אינה תשלום — נרשם 0.
+  const defaultPaid = Math.max(breakdown.calculatedTotal, 0);
   const now = new Date();
   const createdBy = session?.user?.email ?? '';
   const doc: SettlementRunDoc = {
     project_id: body.project_id,
     breakdown,
-    paid_total: breakdown.calculatedTotal,
-    paid_audit: [{ amount: breakdown.calculatedTotal, note: 'ברירת מחדל: שולם במלואו בעת הפקת הדוח', updated_at: now, updated_by: createdBy }],
+    paid_total: defaultPaid,
+    paid_audit: [{ amount: defaultPaid, note: 'ברירת מחדל: שולם במלואו בעת הפקת הדוח', updated_at: now, updated_by: createdBy }],
     created_at: now,
     created_by: createdBy,
   };
