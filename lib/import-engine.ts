@@ -55,11 +55,22 @@ interface ParsedFile {
   rows: Record<string, unknown>[];
 }
 
+/**
+ * קובצי מית"ר עד אמצע 2024 מקודדים windows-1255 (ללא BOM), והחדשים UTF-8.
+ * פענוח קובץ ישן כ-UTF-8 הופך כל אות עברית לתו החלפה (U+FFFD) — כולל שמות
+ * העמודות — והשורות נשמרות ב-DB בלתי נראות לכל שאילתה.
+ */
+export function decodeCsvBuffer(buffer: Buffer): string {
+  const utf8 = buffer.toString('utf-8');
+  if (!utf8.includes('�')) return utf8;
+  return new TextDecoder('windows-1255').decode(buffer);
+}
+
 function parseCSVFromBuffer(buffer: Buffer): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const rows: Record<string, unknown>[] = [];
     let allHeaders: string[] = [];
-    const text = buffer.toString('utf-8');
+    const text = decodeCsvBuffer(buffer);
     const readable = Readable.from([text]);
 
     readable

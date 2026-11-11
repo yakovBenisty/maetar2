@@ -29,3 +29,6 @@ yarn-error.log*
 *.pem
 .vscode/
 *.tsbuildinfo
+
+# local MITAR sync logs
+/logs/

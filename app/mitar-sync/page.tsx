@@ -10,9 +10,17 @@ interface SyncRun {
   status: 'success' | 'error';
   files_count?: number;
   error?: string;
+  source?: string;
   started_at: string;
   finished_at: string;
 }
+
+const SOURCE_LABELS: Record<string, string> = {
+  server: 'שרת (ייתכן שחסום)',
+  relay: 'Relay (רשת הרשות)',
+  local: 'מחשב מקומי (מתוזמן)',
+  backfill: 'השלמת היסטוריה',
+};
 
 function formatDateTime(dateStr?: string): string {
   if (!dateStr) return '';
@@ -73,6 +81,11 @@ export default function MitarSyncPage() {
         <p className="text-[#636c76] text-sm">
           איסוף אוטומטי של קבצי ההכנסות ממערכת מית&quot;ר של משרד החינוך, וייבואם למערכת
         </p>
+        <p className="text-[#9a6700] text-xs mt-1">
+          אתר מית&quot;ר חוסם גישה מטווחי IP של ספקי cloud — הסנכרון בפועל מגיע מ-relay שרץ ברשת
+          הרשות (ראו scripts/mitar-relay.ts). &quot;הרץ סנכרון עכשיו&quot; מריץ ניסיון ישירות מהשרת,
+          לבדיקה בלבד, ועשוי להיכשל ב-timeout.
+        </p>
       </div>
 
       <div className="flex items-center gap-4 mb-6">
@@ -90,7 +103,7 @@ export default function MitarSyncPage() {
           ) : (
             <>
               <span>🔄</span>
-              <span>הרץ סנכרון עכשיו</span>
+              <span>נסה סנכרון מהשרת (בדיקה)</span>
             </>
           )}
         </button>
@@ -124,6 +137,7 @@ export default function MitarSyncPage() {
                 <th className="px-4 py-2 text-right font-medium">חודש</th>
                 <th className="px-4 py-2 text-right font-medium">סטטוס</th>
                 <th className="px-4 py-2 text-right font-medium">קבצים</th>
+                <th className="px-4 py-2 text-right font-medium">מקור</th>
                 <th className="px-4 py-2 text-right font-medium">הודעה</th>
                 <th className="px-4 py-2 text-right font-medium">תאריך ביצוע</th>
               </tr>
@@ -142,6 +156,7 @@ export default function MitarSyncPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2 text-[#1f2328]">{run.files_count ?? ''}</td>
+                  <td className="px-4 py-2 text-[#636c76] text-xs">{run.source ? SOURCE_LABELS[run.source] ?? run.source : ''}</td>
                   <td className="px-4 py-2 text-[#cf222e] text-xs">{run.error ?? ''}</td>
                   <td className="px-4 py-2 text-[#636c76]">{formatDateTime(run.started_at)}</td>
                 </tr>

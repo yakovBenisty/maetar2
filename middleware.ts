@@ -8,7 +8,10 @@ export default auth((req) => {
   const isLoggedIn = !!req.auth;
   const { pathname } = req.nextUrl;
   const isPublic =
-    pathname.startsWith('/login') || pathname.startsWith('/api/auth');
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/api/auth') ||
+    // קריאת מכונה-למכונה מה-relay ברשת הרשות — ללא session משתמש; מאובטחת בטוקן סודי בתוך ה-route עצמו.
+    pathname.startsWith('/api/mitar-sync/ingest');
 
   if (!isLoggedIn && !isPublic) {
     return Response.redirect(new URL('/login', req.url));
