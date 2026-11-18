@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
     const db = await getDb();
     const result: Record<string, unknown[]> = {};
     const errors: Record<string, string> = {};
+    const noMosadQueries: Record<string, Filter<Document>> = {};
 
     for (const colName of collections) {
       const query: Filter<Document> = {};
@@ -68,6 +69,12 @@ export async function POST(req: NextRequest) {
         const allCodes = [...new Set([...nose_codes, ...numericCodes])];
         query['קוד_נושא'] = { $in: allCodes } as unknown as string;
       }
+
+      const queryNoMosad: Filter<Document> = { ...query };
+      if (colName === 'MUCARIM' || colName === 'SHARATIM') {
+        queryNoMosad['הפרש_מחושב'] = { $ne: 0 } as unknown as number;
+      }
+      noMosadQueries[colName] = queryNoMosad;
 
       if (mosad_codes && mosad_codes.length > 0) {
         // סמל_מוסד נשמר כמספר או כמחרוזת. שורות שאינן משויכות למוסד — שדה חסר (חשבוניות) או
@@ -107,6 +114,37 @@ export async function POST(req: NextRequest) {
 
     const total = Object.values(result).reduce((sum, rows) => sum + rows.length, 0);
 
+    // סינון מוסד שהשאיר קובץ ריק: אומרים אם יש בו נתונים למוסדות אחרים (ולכמה), כדי שיהיה ברור
+    // שהקובץ לא ריק אלא שהמוסדות שנבחרו אין להם שורות בו.
+    let otherInstitutions: Record<string, { rows: number; institutions: number; examples: string[] }> | undefined;
+    if (mosad_codes && mosad_codes.length > 0) {
+      otherInstitutions = {};
+      for (const colName of collections) {
+        if ((result[colName]?.length ?? 0) > 0 || errors[colName]) continue;
+        try {
+          const groups = await db
+            .collection(colName)
+            .aggregate([
+              { $match: noMosadQueries[colName] },
+              { $match: { סמל_מוסד: { $nin: [null, 0, '0'] } } },
+              { $group: { _id: '$סמל_מוסד', name: { $first: '$שם_מוסד' }, n: { $sum: 1 } } },
+              { $sort: { n: -1 } },
+            ])
+            .toArray();
+          if (groups.length > 0) {
+            otherInstitutions[colName] = {
+              rows: groups.reduce((sum, g) => sum + g.n, 0),
+              institutions: groups.length,
+              examples: groups.slice(0, 4).map((g) => (g.name ? String(g.name) : String(g._id))),
+            };
+          }
+        } catch {
+          // ההסבר הוא בונוס — כשל בו לא צריך להפיל את הדוח
+        }
+      }
+      if (Object.keys(otherInstitutions).length === 0) otherInstitutions = undefined;
+    }
+
     // כשלא חזרו רשומות — מחזירים גם את טווח חודשי החישוב הקיימים בכל קולקשן, כדי שהמסך
     // יוכל להסביר אם הסינון פשוט חורג מהנתונים (למשל חודש שמית"ר טרם פרסם).
     let available: Record<string, { from: string; to: string } | null> | undefined;
@@ -130,7 +168,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       data: result,
-      meta: { total, errors: Object.keys(errors).length ? errors : undefined, available },
+      meta: { total, errors: Object.keys(errors).length ? errors : undefined, available, otherInstitutions },
     });
   } catch (error) {
     return NextResponse.json(

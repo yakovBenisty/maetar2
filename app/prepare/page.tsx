@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { exportToCsv } from '@/app/components/exportCsv';
 import { AgGridReact } from 'ag-grid-react';
+import { defaultColDefWithFilter } from '@/app/components/gridDefaults';
 import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -737,7 +738,7 @@ export default function PreparePage() {
                       rowData={result.tabs?.period1 ?? []}
                       columnDefs={commandColDefsDisplayed}
                       enableRtl={true}
-                      defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                      defaultColDef={defaultColDefWithFilter}
                       onGridReady={(p) => setP1Api(p.api)}
                       onFilterChanged={handleP1ModelUpdated}
                       pinnedBottomRowData={p1SummaryRow}
@@ -773,7 +774,7 @@ export default function PreparePage() {
                       rowData={result.tabs?.period2 ?? []}
                       columnDefs={commandColDefsDisplayed}
                       enableRtl={true}
-                      defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                      defaultColDef={defaultColDefWithFilter}
                       onGridReady={(p) => setP2Api(p.api)}
                       onFilterChanged={handleP2ModelUpdated}
                       pinnedBottomRowData={p2SummaryRow}
@@ -809,7 +810,7 @@ export default function PreparePage() {
                       rowData={result.tabs?.logs ?? []}
                       columnDefs={logColDefsDisplayed}
                       enableRtl={true}
-                      defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                      defaultColDef={defaultColDefWithFilter}
                       onGridReady={(p) => setLogsApi(p.api)}
                       onFilterChanged={handleLogsModelUpdated}
                       pinnedBottomRowData={logsSummaryRow}
@@ -845,7 +846,7 @@ export default function PreparePage() {
                       rowData={result.tabs?.rejected ?? []}
                       columnDefs={rejectedColDefsDisplayed}
                       enableRtl={true}
-                      defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                      defaultColDef={defaultColDefWithFilter}
                       onGridReady={(p) => setRejectedApi(p.api)}
                       onFilterChanged={handleRejectedModelUpdated}
                       pinnedBottomRowData={rejectedSummaryRow}

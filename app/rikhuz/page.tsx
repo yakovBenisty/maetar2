@@ -1,7 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
+import { defaultColDefWithFilter } from '@/app/components/gridDefaults'
 import { ModuleRegistry, AllCommunityModule, ColDef } from 'ag-grid-community'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
@@ -47,6 +48,7 @@ interface SearchInfo {
   total: number
   filters: string[]
   mosadFiltered: boolean
+  otherInstitutions?: Record<string, { rows: number; institutions: number; examples: string[] }>
   available?: Record<string, { from: string; to: string } | null>
   errors?: Record<string, string>
 }
@@ -405,7 +407,7 @@ export default function RikhuzPage() {
       const tab = firstWithData ?? 'CHESHBONIT'
       setActiveTab(tab)
       setFilteredRows((d.data?.[tab] ?? []) as Record<string, unknown>[])
-      setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, mosadFiltered: !allMosdotSel, available: d.meta?.available, errors: d.meta?.errors })
+      setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, mosadFiltered: !allMosdotSel, otherInstitutions: d.meta?.otherInstitutions, available: d.meta?.available, errors: d.meta?.errors })
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : 'שגיאה בביצוע החיפוש')
     } finally {
@@ -519,7 +521,7 @@ export default function RikhuzPage() {
   const onFilterChanged = useCallback((p: { api: { forEachNodeAfterFilter: (cb: (n: { data?: unknown }) => void) => void } }) => {
     const rows: Record<string, unknown>[] = []
     p.api.forEachNodeAfterFilter(node => { if (node.data) rows.push(node.data as Record<string, unknown>) })
-    setFilteredRows(rows)
+    startTransition(() => setFilteredRows(rows))
   }, [])
 
   // ── Dropdown items ─────────────────────────────────────────────────────────
@@ -702,9 +704,17 @@ export default function RikhuzPage() {
         </div>
       )}
 
-      {hasData && !loading && lastSearch?.mosadFiltered && lastSearch.total > 0 && (
-        <div className="px-4 py-2 bg-[#ddf4ff] border border-[#54aeff] rounded-lg text-xs text-[#0550ae]">
-          הסינון לפי מוסד חל על הקבצים שמפרטים מוסד (מוצרים, שירותים וכו׳). חשבוניות וידניים ללא מוסד מוצגים במלואם — החשבוניות מרכזות את כל המוסדות יחד.
+      {hasData && !loading && lastSearch?.mosadFiltered && (
+        <div className="px-4 py-2 bg-[#ddf4ff] border border-[#54aeff] rounded-lg text-xs text-[#0550ae] flex flex-col gap-1">
+          <div>
+            הסינון לפי מוסד חל על הקבצים שמפרטים מוסד (מוצרים, שירותים וכו׳). חשבוניות וידניים ללא מוסד מוצגים במלואם — החשבוניות מרכזות את כל המוסדות יחד.
+          </div>
+          {lastSearch.otherInstitutions && Object.entries(lastSearch.otherInstitutions).map(([k, v]) => (
+            <div key={k} className="font-medium">
+              {allTabs.find(t => t.key === k)?.label ?? k}: אין שורות למוסדות שנבחרו, אבל יש {v.rows.toLocaleString()} שורות ל-{v.institutions} מוסדות אחרים
+              {v.examples.length > 0 && ` (למשל: ${v.examples.join(', ')})`}.
+            </div>
+          ))}
         </div>
       )}
 
@@ -778,7 +788,7 @@ export default function RikhuzPage() {
               pinnedBottomRowData={pinnedBottomRow}
               enableRtl
               theme="legacy"
-              defaultColDef={{ sortable: true, resizable: true, filter: true }}
+              defaultColDef={defaultColDefWithFilter}
               onFilterChanged={onFilterChanged}
               onGridReady={p => {
                 p.api.sizeColumnsToFit()

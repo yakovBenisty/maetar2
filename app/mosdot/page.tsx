@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ImportInfoButton from '@/app/components/ImportInfoButton';
 import { exportToCsv } from '@/app/components/exportCsv';
 import { AgGridReact } from 'ag-grid-react';
+import { defaultColDefWithFilter } from '@/app/components/gridDefaults';
 import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -456,7 +457,7 @@ export default function MosdotPage() {
                 rowData={rows}
                 columnDefs={colDefsWithActions}
                 enableRtl={true}
-                defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                defaultColDef={defaultColDefWithFilter}
                 pagination={true}
                 paginationPageSize={25}
                 onGridReady={(p) => setGridApi(p.api)}

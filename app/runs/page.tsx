@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { exportToCsv } from '@/app/components/exportCsv';
 import { AgGridReact } from 'ag-grid-react';
+import { defaultColDefWithFilter } from '@/app/components/gridDefaults';
 import { ModuleRegistry, AllCommunityModule, ColDef, GridApi } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -209,7 +210,7 @@ export default function RunsPage() {
                 rowData={runs}
                 columnDefs={displayedColDefs}
                 enableRtl={true}
-                defaultColDef={{ sortable: true, resizable: true, filter: true }}
+                defaultColDef={defaultColDefWithFilter}
                 pagination={true}
                 paginationPageSize={20}
                 onFilterChanged={onFilterChanged}
