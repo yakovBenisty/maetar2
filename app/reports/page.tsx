@@ -46,9 +46,12 @@ interface TabConfig {
   columnFields: string[]
   valueFields: ValueField[]
   filterFields: FilterField[]
+  /** לשונית שמקורה בחיפוש של דוח הריכוז (ולא בקולקשן שלם): השאילתה נשמרת ומורצת מחדש בשחזור */
+  source?: { query: Record<string, unknown> }
 }
 
 interface TabState extends TabConfig {
+  notice?: string
   fieldList: string[]
   fieldTypes: Record<string, FieldType>
   rawData: Record<string, unknown>[] | null
@@ -267,6 +270,113 @@ function sortedRowData(rows: Record<string, unknown>[], rowFields: string[]): Re
     }
     return 0
   })
+}
+
+// ─── Data from a report-query (העברה מדוח ריכוז) ──────────────────────────────
+
+const QUERY_ROW_LIMIT = 100000
+const NO_INSTITUTION = 'ללא מוסד'
+
+/** שדה הסכום שמסכמים כברירת מחדל, לפי הקובץ: הפרש_מחושב מצטבר נכון על פני חודשי חישוב; סכום_מחושב לא. */
+const AMOUNT_BY_COLLECTION: Record<string, string[]> = {
+  CHESHBONIT: ['יתרת_ביצוע_החודש', 'הפרש_לתשלום'],
+  YADANIIM: ['סכום_מחושב'],
+  COMMANDS: ['סכום_זכות'],
+}
+const AMOUNT_FALLBACK = ['הפרש_מחושב', 'סכום_מחושב', 'יתרת_ביצוע_החודש', 'סכום_זכות']
+
+function fieldsFromRows(rows: Record<string, unknown>[]): string[] {
+  const seen = new Set<string>()
+  for (const r of rows.slice(0, 500)) for (const k of Object.keys(r)) seen.add(k)
+  return Array.from(seen)
+}
+
+/** שורות בלי מוסד (חשבוניות, רוב הידניים) מקובצות תחת "ללא מוסד" במקום תא ריק או 0. */
+function normalizeInstitutionRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (rows.length === 0) return rows
+  const hasCode = rows.some(r => 'סמל_מוסד' in r)
+  const hasName = rows.some(r => 'שם_מוסד' in r)
+  if (!hasCode && !hasName) return rows
+  return rows.map(r => {
+    const code = r['סמל_מוסד']
+    if (code !== null && code !== undefined && code !== '' && Number(code) !== 0) return r
+    const out = { ...r }
+    if (hasCode) out['סמל_מוסד'] = NO_INSTITUTION
+    if (hasName) out['שם_מוסד'] = NO_INSTITUTION
+    return out
+  })
+}
+
+/** מבנה ברירת המחדל: שורות = מוסד, עמודות = חודש תחולה, ערך = סכום (קובץ בלי מוסד — לפי נושא). */
+function defaultPivotConfig(collection: string, fields: string[]): Pick<TabConfig, 'rowFields' | 'columnFields' | 'valueFields'> {
+  const has = (f: string) => fields.includes(f)
+  let rowFields: string[]
+  if (has('סמל_מוסד')) {
+    rowFields = ['סמל_מוסד', ...(has('שם_מוסד') ? ['שם_מוסד'] : [])]
+  } else {
+    const topicName = ['תאור_נושא', 'נושא', 'שם_נושא'].find(has)
+    rowFields = [...(has('קוד_נושא') ? ['קוד_נושא'] : []), ...(topicName ? [topicName] : [])]
+  }
+  const columnFields = has('חודש_תחולה') ? ['חודש_תחולה'] : []
+  const amount = [...(AMOUNT_BY_COLLECTION[collection] ?? []), ...AMOUNT_FALLBACK].find(has)
+  const valueFields: ValueField[] = amount
+    ? [{ field: amount, aggFunc: 'sum' }]
+    : fields.length > 0 ? [{ field: fields[0], aggFunc: 'count' }] : []
+  return { rowFields, columnFields, valueFields }
+}
+
+async function fetchQueryRows(
+  collection: string,
+  query: Record<string, unknown>,
+): Promise<{ rows: Record<string, unknown>[]; truncated: boolean; errors?: Record<string, string> }> {
+  const res = await fetch('/api/reports/query', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...query, collections: [collection], limit: QUERY_ROW_LIMIT + 1 }),
+  })
+  const d = await res.json().catch(() => null)
+  if (!res.ok || !d?.ok) throw new Error(d?.error ?? `שגיאת שרת (${res.status})`)
+  let rows = (d.data?.[collection] ?? []) as Record<string, unknown>[]
+  const truncated = rows.length > QUERY_ROW_LIMIT
+  if (truncated) rows = rows.slice(0, QUERY_ROW_LIMIT)
+  return { rows: normalizeInstitutionRows(rows), truncated, errors: d.meta?.errors }
+}
+
+// ─── Bar chart by application month (SVG, no dependency) ────────────────────────
+
+function TachulaChart({ points }: { points: { month: string; value: number }[] }) {
+  const W = 900, H = 200, padL = 8, padR = 8, padT = 14, padB = 40
+  if (points.length === 0) return null
+  const max = Math.max(0, ...points.map(p => p.value))
+  const min = Math.min(0, ...points.map(p => p.value))
+  const span = max - min || 1
+  const plotH = H - padT - padB
+  const y = (v: number) => padT + ((max - v) / span) * plotH
+  const zeroY = y(0)
+  const slot = (W - padL - padR) / points.length
+  const barW = Math.max(2, Math.min(40, slot * 0.7))
+  const every = Math.max(1, Math.ceil(points.length / 18))
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 240 }} direction="ltr">
+      <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="#d1d9e0" />
+      {points.map((p, i) => {
+        const cx = padL + slot * i + slot / 2
+        const top = Math.min(y(p.value), zeroY)
+        const h = Math.max(1, Math.abs(y(p.value) - zeroY))
+        return (
+          <g key={p.month}>
+            <rect x={cx - barW / 2} y={top} width={barW} height={h} fill={p.value < 0 ? '#cf222e' : '#0969da'} rx={1}>
+              <title>{`${p.month}: ${fmtNum(p.value)}`}</title>
+            </rect>
+            {i % every === 0 && (
+              <text x={cx} y={H - padB + 14} fontSize="10" fill="#636c76" textAnchor="middle">{p.month}</text>
+            )}
+          </g>
+        )
+      })}
+    </svg>
+  )
 }
 
 // ─── Manual pivot table builder ───────────────────────────────────────────────
@@ -518,6 +628,52 @@ export default function ReportsPage() {
     setTabs(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
   }, [])
 
+  // ── לשונית שמקורה בחיפוש מדוח ריכוז ────────────────────────────────────────
+
+  const loadSourceTab = async (tab: TabState, applyDefaults: boolean) => {
+    if (!tab.source) return
+    updTab(tab.id, { loading: true, notice: undefined })
+    try {
+      const { rows, truncated, errors } = await fetchQueryRows(tab.collection, tab.source.query)
+      const fieldList = fieldsFromRows(rows)
+      const patch: Partial<TabState> = {
+        rawData: rows,
+        fieldList,
+        fieldTypes: detectAllFieldTypes(rows, fieldList),
+        loading: false,
+        notice: truncated
+          ? `הנתונים קוצצו ל-${QUERY_ROW_LIMIT.toLocaleString()} שורות — כדאי לצמצם את החיפוש בדוח הריכוז.`
+          : errors ? `השאילתה נכשלה בקולקשן הזה: ${Object.values(errors).join(', ')}` : undefined,
+      }
+      if (applyDefaults) Object.assign(patch, defaultPivotConfig(tab.collection, fieldList))
+      updTab(tab.id, patch)
+    } catch (e) {
+      updTab(tab.id, { loading: false, notice: `טעינת הנתונים נכשלה: ${e instanceof Error ? e.message : 'שגיאה'}` })
+    }
+  }
+
+  // העברה מדוח ריכוז: דוח הריכוז משאיר ב-sessionStorage את תיאור החיפוש (לא את השורות),
+  // והפיווט מריץ אותו בעצמו — כך גם דוח שמור משוחזר מנתונים עדכניים.
+  useEffect(() => {
+    let raw: string | null = null
+    try {
+      raw = sessionStorage.getItem('pivot_handoff')
+      if (raw) sessionStorage.removeItem('pivot_handoff')
+    } catch { /* ללא sessionStorage — פשוט לא מעבירים */ }
+    if (!raw) return
+    try {
+      const h = JSON.parse(raw) as { query: Record<string, unknown>; tabs: { collection: string; label: string }[] }
+      const fresh: TabState[] = (h.tabs ?? []).map(t => ({
+        ...mkTab(), label: t.label, collection: t.collection, source: { query: h.query }, loading: true,
+      }))
+      if (fresh.length === 0) return
+      setTabs(fresh)
+      setActiveId(fresh[0].id)
+      fresh.forEach(t => { void loadSourceTab(t, true) })
+    } catch { /* תוכן לא תקין — מתעלמים */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Collection ────────────────────────────────────────────────────────────
 
   const onCollChange = async (tabId: string, col: string) => {
@@ -536,6 +692,7 @@ export default function ReportsPage() {
   const onRun = async (tabId: string) => {
     const tab = tabs.find(t => t.id === tabId)
     if (!tab?.collection) return
+    if (tab.source) { await loadSourceTab(tab, false); return }
     updTab(tabId, { loading: true })
     try {
       const r = await fetch('/api/pivot/data', {
@@ -607,6 +764,25 @@ export default function ReportsPage() {
       filteredData, activeTab.rowFields, activeTab.columnFields, activeTab.valueFields,
     )
   }, [filteredData, activeTab?.rowFields, activeTab?.columnFields, activeTab?.valueFields])
+
+  // פילוח לפי חודשי תחולה של מה שמוצג בפיווט: אותם מסננים, ואותו שדה ערך (הראשון) והסיכום שלו.
+  const tachulaSummary = useMemo(() => {
+    if (!filteredData || !activeTab?.fieldList.includes('חודש_תחולה')) return null
+    const vf: ValueField | null = activeTab.valueFields[0] ?? null
+    const groups = new Map<string, Record<string, unknown>[]>()
+    for (const r of filteredData) {
+      const k = String(r['חודש_תחולה'] ?? '')
+      if (!k) continue
+      const g = groups.get(k)
+      if (g) g.push(r); else groups.set(k, [r])
+    }
+    if (groups.size === 0) return null
+    const months = sortedColVals(new Set(groups.keys()))
+    const valueOf = (rows: Record<string, unknown>[]) => (vf ? calcAgg(rows, vf) : rows.length)
+    const rows = months.map(m => ({ month: m, value: valueOf(groups.get(m)!), count: groups.get(m)!.length }))
+    const dated = filteredData.filter(r => r['חודש_תחולה'])
+    return { vf, rows, total: valueOf(dated), totalCount: dated.length }
+  }, [filteredData, activeTab?.valueFields, activeTab?.fieldList])
 
   // Final grid data / column defs / pinned bottom
   const { gridRowData, columnDefs, pinnedBottom } = useMemo(() => {
@@ -804,8 +980,8 @@ export default function ReportsPage() {
   const saveReport = async () => {
     if (!saveName.trim()) return
     const tabsConfig: TabConfig[] = tabs.map(
-      ({ id, label, collection, filterLogic, rowFields, columnFields, valueFields, filterFields }) => ({
-        id, label, collection, filterLogic, rowFields, columnFields, valueFields, filterFields,
+      ({ id, label, collection, filterLogic, rowFields, columnFields, valueFields, filterFields, source }) => ({
+        id, label, collection, filterLogic, rowFields, columnFields, valueFields, filterFields, source,
       })
     )
     await fetch('/api/pivot/reports', {
@@ -820,7 +996,7 @@ export default function ReportsPage() {
     const loaded: TabState[] = await Promise.all(
       report.tabs.map(async tc => {
         let fieldList: string[] = []
-        if (tc.collection) {
+        if (tc.collection && !tc.source) {
           try {
             const r = await fetch(`/api/pivot/fields?collection=${encodeURIComponent(tc.collection)}`)
             const d = await r.json()
@@ -837,11 +1013,12 @@ export default function ReportsPage() {
           filterLogic: tc.filterLogic ?? 'AND',
           columnFields: tc.columnFields ?? [],
           filterFields,
-          fieldList, fieldTypes: {}, rawData: null, loading: false,
+          fieldList, fieldTypes: {}, rawData: null, loading: !!tc.source,
         }
       })
     )
     setTabs(loaded); setActiveId(loaded[0]?.id ?? ''); setSavedOpen(false)
+    loaded.filter(t => t.source).forEach(t => { void loadSourceTab(t, false) })
   }
 
   const deleteReport = async (id: string, e: React.MouseEvent) => {
@@ -1027,10 +1204,14 @@ export default function ReportsPage() {
           <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-xl border border-[#d1d9e0] flex-wrap">
             <label className="text-sm font-medium text-[#636c76] shrink-0">קולקשין:</label>
             <select value={activeTab.collection} onChange={e => onCollChange(activeTab.id, e.target.value)}
-              className="text-sm border border-[#d1d9e0] rounded-lg px-3 py-1.5 bg-white text-[#1f2328] focus:outline-none focus:border-[#0969da]">
+              disabled={!!activeTab.source}
+              className="text-sm border border-[#d1d9e0] rounded-lg px-3 py-1.5 bg-white text-[#1f2328] focus:outline-none focus:border-[#0969da] disabled:opacity-70">
               <option value="">בחר...</option>
               {collections.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            {activeTab.source && (
+              <span className="text-xs text-[#0550ae] bg-[#ddf4ff] px-2 py-1 rounded-full shrink-0">מקור: חיפוש מדוח ריכוז</span>
+            )}
             {activeTab.rawData && (
               <span className="text-xs text-[#636c76] bg-[#f0f3f6] px-2 py-1 rounded-full shrink-0">
                 {activeTab.rawData.length.toLocaleString()} שורות
@@ -1061,6 +1242,10 @@ export default function ReportsPage() {
               יצוא Excel
             </button>
           </div>
+
+          {activeTab.notice && (
+            <div className="px-4 py-2 bg-[#fff8c5] border border-[#9a6700] rounded-lg text-xs text-[#9a6700]">{activeTab.notice}</div>
+          )}
 
           {/* Builder zones — collapsible */}
           {!builderOpen && (
@@ -1325,6 +1510,46 @@ export default function ReportsPage() {
               />
             )}
           </div>
+
+          {/* פילוח לפי חודשי תחולה */}
+          {tachulaSummary && (
+            <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa] flex items-center justify-between flex-wrap gap-2">
+                <h3 className="text-sm font-semibold text-[#1f2328]">
+                  פילוח לפי חודשי תחולה — {tachulaSummary.vf ? `${AGG_HEB[tachulaSummary.vf.aggFunc]}(${tachulaSummary.vf.field})` : 'מספר שורות'}
+                </h3>
+                <span className="text-xs text-[#636c76]">מה שמוצג בפיווט כרגע, כולל המסננים</span>
+              </div>
+              <div className="px-4 pt-3">
+                <TachulaChart points={tachulaSummary.rows.map(r => ({ month: r.month, value: r.value }))} />
+              </div>
+              <div className="overflow-y-auto" style={{ maxHeight: 260 }}>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[#f6f8fa] border-y border-[#d1d9e0] text-right sticky top-0">
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חודש תחולה</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סכום</th>
+                      <th className="px-4 py-2 text-xs font-medium text-[#636c76]">שורות</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tachulaSummary.rows.map(r => (
+                      <tr key={r.month} className="border-b border-[#f0f3f6]">
+                        <td className="px-4 py-1.5 text-[#1f2328]">{r.month}</td>
+                        <td className={`px-4 py-1.5 font-mono ${r.value < 0 ? 'text-[#cf222e]' : 'text-[#1f2328]'}`}>{fmtNum(r.value)}</td>
+                        <td className="px-4 py-1.5 text-[#636c76]">{r.count.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-[#f6f8fa] font-bold">
+                      <td className="px-4 py-2 text-[#1f2328]">סה&quot;כ</td>
+                      <td className="px-4 py-2 font-mono">{fmtNum(tachulaSummary.total)}</td>
+                      <td className="px-4 py-2 text-[#636c76]">{tachulaSummary.totalCount.toLocaleString()}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

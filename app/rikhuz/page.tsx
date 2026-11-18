@@ -1,6 +1,7 @@
 'use client'
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { AgGridReact } from 'ag-grid-react'
 import { defaultColDefWithFilter } from '@/app/components/gridDefaults'
 import { ModuleRegistry, AllCommunityModule, ColDef } from 'ag-grid-community'
@@ -248,6 +249,8 @@ export default function RikhuzPage() {
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
   const [savedId,       setSavedId]       = useState('')
   const [savedMsg,      setSavedMsg]      = useState('')
+  const [lastQuery,     setLastQuery]     = useState<Record<string, unknown> | null>(null)
+  const router = useRouter()
   const [activeTab,     setActiveTab]     = useState('CHESHBONIT')
   const [data,          setData]          = useState<Record<string, unknown[]>>({})
   const [filteredRows,  setFilteredRows]  = useState<Record<string, unknown>[]>([])
@@ -382,21 +385,21 @@ export default function RikhuzPage() {
     // מחדש, גם כשהתוצאה זהה, ואין צורך ב"אפס" בין חיפוש לחיפוש.
     setLoading(true)
     setSearchError('')
-    setData({}); setFilteredRows([]); setHasData(false); setLastSearch(null)
+    setData({}); setFilteredRows([]); setHasData(false); setLastSearch(null); setLastQuery(null)
     try {
+      const filterBody = {
+        nose_codes:   allTopicsSel ? undefined : selectedTopics,
+        from_month:   fromMonth   || undefined,
+        to_month:     toMonth     || undefined,
+        from_tachula: fromTachula || undefined,
+        to_tachula:   toTachula   || undefined,
+        mosad_codes:  allMosdotSel ? undefined : selectedMosdot,
+      }
       const res = await fetch('/api/reports/query', {
         method: 'POST',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collections:  allCols,
-          nose_codes:   allTopicsSel ? undefined : selectedTopics,
-          from_month:   fromMonth   || undefined,
-          to_month:     toMonth     || undefined,
-          from_tachula: fromTachula || undefined,
-          to_tachula:   toTachula   || undefined,
-          mosad_codes:  allMosdotSel ? undefined : selectedMosdot,
-        }),
+        body: JSON.stringify({ collections: allCols, ...filterBody }),
       })
       const d = await res.json().catch(() => null)
       if (!res.ok || !d?.ok) throw new Error(d?.error ?? `שגיאת שרת (${res.status})`)
@@ -407,6 +410,7 @@ export default function RikhuzPage() {
       const tab = firstWithData ?? 'CHESHBONIT'
       setActiveTab(tab)
       setFilteredRows((d.data?.[tab] ?? []) as Record<string, unknown>[])
+      setLastQuery(filterBody)
       setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, mosadFiltered: !allMosdotSel, otherInstitutions: d.meta?.otherInstitutions, available: d.meta?.available, errors: d.meta?.errors })
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : 'שגיאה בביצוע החיפוש')
@@ -455,6 +459,23 @@ export default function RikhuzPage() {
     }
     xlsx.writeFile(wb, 'דוח_ריכוז.xlsx')
   }, [data, allTabs])
+
+  // מעביר לפיווט את תיאור החיפוש (לא את השורות) — הפיווט מריץ אותו בעצמו. הלשונית הפעילה נפתחת ראשונה.
+  const sendToPivot = () => {
+    if (!lastQuery) return
+    const withData = allTabs
+      .filter(t => (data[t.key]?.length ?? 0) > 0)
+      .map(t => ({ collection: t.key, label: t.label }))
+      .sort((a, b) => Number(b.collection === activeTab) - Number(a.collection === activeTab))
+    if (withData.length === 0) return
+    try {
+      sessionStorage.setItem('pivot_handoff', JSON.stringify({ v: 1, query: lastQuery, tabs: withData }))
+    } catch {
+      window.alert('לא ניתן להעביר לפיווט (אחסון הדפדפן חסום).')
+      return
+    }
+    router.push('/reports')
+  }
 
   const exportCsv = useCallback(() => {
     if (activeRows.length === 0) return
@@ -768,6 +789,13 @@ export default function RikhuzPage() {
                 className="px-3 py-1.5 text-xs border border-[#d1d9e0] bg-white rounded-lg hover:bg-[#f0f3f6] disabled:opacity-50 flex items-center gap-1 transition-colors"
               >
                 📊 יצוא Excel
+              </button>
+              <button
+                onClick={sendToPivot}
+                disabled={!lastQuery || allTabs.every(t => (data[t.key]?.length ?? 0) === 0)}
+                className="px-3 py-1.5 text-xs bg-[#0969da] text-white rounded-lg hover:bg-[#0860ca] disabled:opacity-50 flex items-center gap-1 transition-colors"
+              >
+                📈 העבר לדוח פיווט
               </button>
               <ColumnPickerButton
                 columns={summaryColumns}
