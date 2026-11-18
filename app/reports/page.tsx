@@ -11,6 +11,7 @@ import {
 } from 'ag-grid-community'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
+import MultiSelect from '@/app/components/MultiSelect'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -343,6 +344,98 @@ async function fetchQueryRows(
   return { rows: normalizeInstitutionRows(rows), truncated, errors: d.meta?.errors }
 }
 
+// ─── Source-query filters (topics / institutions / months) ──────────────────────
+
+interface RefItem { value: string; label: string }
+
+const FILTER_INPUT_CLS = 'w-full bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0969da]'
+
+/**
+ * סרגל סינון של לשונית שמקורה בחיפוש מדוח ריכוז: מציג את הסינונים השמורים בשאילתה
+ * (נושאים, מוסדות, חודשי חישוב ותחולה) ומאפשר לשנות אותם ולהריץ מחדש. ללא נושאים/מוסדות
+ * בשאילתה = הכל. הטיוטה מקומית עד לחיצה על "החל סינון".
+ */
+function SourceFilters({ query, topics, mosdot, loading, onApply }: {
+  query: Record<string, unknown>
+  topics: RefItem[]
+  mosdot: RefItem[]
+  loading: boolean
+  onApply: (q: Record<string, unknown>) => void
+}) {
+  const str = (k: string) => (typeof query[k] === 'string' ? (query[k] as string) : '')
+  const list = (k: string) => (Array.isArray(query[k]) ? (query[k] as unknown[]).map(String) : null)
+
+  const [selTopics, setSelTopics] = useState<string[]>(() => list('nose_codes') ?? topics.map(t => t.value))
+  const [selMosdot, setSelMosdot] = useState<string[]>(() => list('mosad_codes') ?? mosdot.map(m => m.value))
+  const [fromMonth, setFromMonth] = useState(str('from_month'))
+  const [toMonth, setToMonth] = useState(str('to_month'))
+  const [fromTachula, setFromTachula] = useState(str('from_tachula'))
+  const [toTachula, setToTachula] = useState(str('to_tachula'))
+
+  // הרשימות נטענות אחרי העמוד: כל עוד אין בשאילתה בחירה מפורשת, "הכל" = כל הרשימה שהגיעה.
+  const topicsSaved = list('nose_codes')
+  const mosdotSaved = list('mosad_codes')
+  useEffect(() => { if (!topicsSaved) setSelTopics(topics.map(t => t.value)) }, [topics, topicsSaved])
+  useEffect(() => { if (!mosdotSaved) setSelMosdot(mosdot.map(m => m.value)) }, [mosdot, mosdotSaved])
+
+  const allTopics = topics.length > 0 && selTopics.length === topics.length
+  const allMosdot = mosdot.length > 0 && selMosdot.length === mosdot.length
+
+  const apply = () => {
+    const q: Record<string, unknown> = { ...query }
+    const put = (k: string, v: unknown) => { if (v === undefined || v === '') delete q[k]; else q[k] = v }
+    put('nose_codes', allTopics || topics.length === 0 ? undefined : selTopics)
+    put('mosad_codes', allMosdot || mosdot.length === 0 ? undefined : selMosdot)
+    put('from_month', fromMonth); put('to_month', toMonth)
+    put('from_tachula', fromTachula); put('to_tachula', toTachula)
+    onApply(q)
+  }
+
+  const reset = () => {
+    setSelTopics(topics.map(t => t.value)); setSelMosdot(mosdot.map(m => m.value))
+    setFromMonth(''); setToMonth(''); setFromTachula(''); setToTachula('')
+  }
+
+  return (
+    <div className="bg-white px-4 py-3 rounded-xl border border-[#d1d9e0] flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-[#1f2328]">סינון הנתונים</span>
+        <span className="text-xs text-[#636c76]">שינוי הסינון מריץ מחדש את החיפוש; מבנה הפיווט נשמר.</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+        <MultiSelect label="נושאים" items={topics} selected={selTopics} onChange={setSelTopics} searchPlaceholder="חפש נושא..." />
+        <MultiSelect label="מוסדות" items={mosdot} selected={selMosdot} onChange={setSelMosdot} searchPlaceholder="חפש מוסד..." />
+        <div>
+          <label className="block text-xs text-[#636c76] mb-1.5 font-medium">מחודש תחולה</label>
+          <input type="month" value={fromTachula} onChange={e => setFromTachula(e.target.value)} className={FILTER_INPUT_CLS} />
+        </div>
+        <div>
+          <label className="block text-xs text-[#636c76] mb-1.5 font-medium">עד חודש תחולה</label>
+          <input type="month" value={toTachula} onChange={e => setToTachula(e.target.value)} className={FILTER_INPUT_CLS} />
+        </div>
+        <div>
+          <label className="block text-xs text-[#636c76] mb-1.5 font-medium">מחודש חישוב</label>
+          <input type="month" value={fromMonth} onChange={e => setFromMonth(e.target.value)} className={FILTER_INPUT_CLS} />
+        </div>
+        <div>
+          <label className="block text-xs text-[#636c76] mb-1.5 font-medium">עד חודש חישוב</label>
+          <input type="month" value={toMonth} onChange={e => setToMonth(e.target.value)} className={FILTER_INPUT_CLS} />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={apply} disabled={loading}
+          className="px-4 py-1.5 text-sm bg-[#0969da] text-white rounded-lg hover:bg-[#0550ae] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+          {loading ? '⏳ טוען...' : '🔍 החל סינון'}
+        </button>
+        <button onClick={reset} disabled={loading}
+          className="px-3 py-1.5 text-sm border border-[#d1d9e0] bg-white text-[#636c76] rounded-lg hover:bg-[#f0f3f6] disabled:opacity-50 transition-colors">
+          נקה סינון
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Bar chart by application month (SVG, no dependency) ────────────────────────
 
 function TachulaChart({ points }: { points: { month: string; value: number }[] }) {
@@ -626,6 +719,19 @@ export default function ReportsPage() {
 
   const updTab = useCallback((id: string, patch: Partial<TabState>) => {
     setTabs(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
+  }, [])
+
+  // רשימות הנושאים והמוסדות לסרגל הסינון של לשוניות שמקורן בדוח ריכוז
+  const [topicItems, setTopicItems] = useState<RefItem[]>([])
+  const [mosadItems, setMosadItems] = useState<RefItem[]>([])
+  useEffect(() => {
+    const lbl = (code: string, name?: string) => (name && name !== code ? `${code} — ${name}` : code)
+    fetch('/api/reports/topics').then(r => r.json()).then(d => {
+      setTopicItems((d.topics ?? []).map((t: { code: string; name?: string }) => ({ value: String(t.code), label: lbl(String(t.code), t.name) })))
+    }).catch(() => {})
+    fetch('/api/mosdot').then(r => r.json()).then(d => {
+      setMosadItems((d.mosdot ?? []).map((m: { code: string; name?: string }) => ({ value: String(m.code), label: lbl(String(m.code), m.name) })))
+    }).catch(() => {})
   }, [])
 
   // ── לשונית שמקורה בחיפוש מדוח ריכוז ────────────────────────────────────────
@@ -1199,6 +1305,17 @@ export default function ReportsPage() {
       {/* Active tab */}
       {activeTab && (
         <div className="flex flex-col gap-3">
+
+          {activeTab.source && (
+            <SourceFilters
+              key={activeTab.id + JSON.stringify(activeTab.source.query)}
+              query={activeTab.source.query}
+              topics={topicItems}
+              mosdot={mosadItems}
+              loading={activeTab.loading}
+              onApply={q => { const t = { ...activeTab, source: { query: q } }; updTab(t.id, { source: t.source }); void loadSourceTab(t, false) }}
+            />
+          )}
 
           {/* Collection bar */}
           <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-xl border border-[#d1d9e0] flex-wrap">
