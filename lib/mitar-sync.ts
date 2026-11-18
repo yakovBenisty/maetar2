@@ -21,8 +21,8 @@ export interface MitarSyncResult {
  * מריץ את תהליך המית"ר כולו משרת ה-Next עצמו: פותח session, מוריד ZIP ומייבא.
  * שימושי רק כשלשרת יש גישת רשת אל apps.education.gov.il — ברוב ספקי ה-cloud
  * בחו"ל (כגון Render/Railway) האתר חוסם את הגישה והקריאה תיכשל ב-timeout. במצב כזה
- * מריצים את אותה פונקציה ממחשב בישראל (scripts/mitar-sync-local.ts, source='local'),
- * או relay שפונה ל-/api/mitar-sync/ingest (ראו lib/mitar-ingest.ts).
+ * מריצים את scripts/mitar-relay.ts ממחשב בישראל: הוא מוריד את ה-ZIP ושולח אותו ל-
+ * /api/mitar-sync/ingest (ראו lib/mitar-ingest.ts).
  */
 export async function runMitarSync(source: MitarSyncSource = 'server'): Promise<MitarSyncResult> {
   const db = await getDb();
