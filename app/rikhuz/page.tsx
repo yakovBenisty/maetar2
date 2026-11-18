@@ -28,6 +28,28 @@ const STD_COLLECTIONS = [
   { key: 'COMMANDS',   label: 'פקודות' },
 ]
 
+interface SavedSearch {
+  _id: string
+  name: string
+  filters: {
+    topics: string[] | null
+    mosdot: string[] | null
+    fromMonth: string
+    toMonth: string
+    fromTachula: string
+    toTachula: string
+    extraCols: string[]
+  }
+}
+
+interface SearchInfo {
+  at: Date
+  total: number
+  filters: string[]
+  available?: Record<string, { from: string; to: string } | null>
+  errors?: Record<string, string>
+}
+
 // ─── Number formatter ─────────────────────────────────────────────────────────
 
 function fmtNum(v: unknown): string {
@@ -218,6 +240,11 @@ export default function RikhuzPage() {
   const [extraOpen,     setExtraOpen]     = useState(false)
   const [loading,       setLoading]       = useState(false)
   const [hasData,       setHasData]       = useState(false)
+  const [searchError,   setSearchError]   = useState('')
+  const [lastSearch,    setLastSearch]    = useState<SearchInfo | null>(null)
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
+  const [savedId,       setSavedId]       = useState('')
+  const [savedMsg,      setSavedMsg]      = useState('')
   const [activeTab,     setActiveTab]     = useState('CHESHBONIT')
   const [data,          setData]          = useState<Record<string, unknown[]>>({})
   const [filteredRows,  setFilteredRows]  = useState<Record<string, unknown>[]>([])
@@ -258,6 +285,74 @@ export default function RikhuzPage() {
       .catch(() => {})
   }, [])
 
+  // ── Saved searches ──────────────────────────────────────────────────────────
+
+  const loadSaved = useCallback(async (selectId?: string) => {
+    try {
+      const res = await fetch('/api/reports/saved-searches', { cache: 'no-store' })
+      const d = await res.json()
+      setSavedSearches(d.searches ?? [])
+      if (selectId !== undefined) setSavedId(selectId)
+    } catch { /* הרשימה פשוט תישאר ריקה */ }
+  }, [])
+
+  useEffect(() => { loadSaved() }, [loadSaved])
+
+  // בחירת חיפוש שמור ממלאת את כל שדות החיפוש; לא מריצה — אפשר לשנות (למשל מוסד אחר) וללחוץ "חפש".
+  const applySaved = (id: string) => {
+    setSavedId(id)
+    setSavedMsg('')
+    const s = savedSearches.find(x => x._id === id)
+    if (!s) return
+    const topicCodes = new Set(topics.map(t => t.code))
+    const mosadCodes = new Set(mosdot.map(m => m.code))
+    const f = s.filters
+    setSelectedTopics(f.topics === null ? topics.map(t => t.code) : f.topics.filter(c => topicCodes.has(c)))
+    setSelectedMosdot(f.mosdot === null ? mosdot.map(m => m.code) : f.mosdot.filter(c => mosadCodes.has(c)))
+    setFromMonth(f.fromMonth); setToMonth(f.toMonth)
+    setFromTachula(f.fromTachula); setToTachula(f.toTachula)
+    setExtraCols(f.extraCols.filter(c => allCollections.includes(c)))
+  }
+
+  const saveCurrent = async () => {
+    const current = savedSearches.find(s => s._id === savedId)
+    const name = window.prompt('שם לחיפוש (שם קיים יעודכן):', current?.name ?? '')?.trim()
+    if (!name) return
+    setSavedMsg('')
+    try {
+      const res = await fetch('/api/reports/saved-searches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          filters: {
+            topics: selectedTopics.length === topics.length ? null : selectedTopics,
+            mosdot: selectedMosdot.length === mosdot.length ? null : selectedMosdot,
+            fromMonth, toMonth, fromTachula, toTachula, extraCols,
+          },
+        }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!res.ok || !d?.ok) throw new Error(d?.error ?? `שגיאת שרת (${res.status})`)
+      await loadSaved(d.id ?? '')
+      setSavedMsg(`החיפוש "${name}" נשמר`)
+    } catch (e) {
+      setSavedMsg(`השמירה נכשלה: ${e instanceof Error ? e.message : 'שגיאה'}`)
+    }
+  }
+
+  const deleteSaved = async () => {
+    const current = savedSearches.find(s => s._id === savedId)
+    if (!current || !window.confirm(`למחוק את החיפוש השמור "${current.name}"?`)) return
+    try {
+      await fetch(`/api/reports/saved-searches?id=${encodeURIComponent(current._id)}`, { method: 'DELETE' })
+      await loadSaved('')
+      setSavedMsg(`החיפוש "${current.name}" נמחק`)
+    } catch {
+      setSavedMsg('המחיקה נכשלה')
+    }
+  }
+
   // ── Close extra dropdown on outside click ───────────────────────────────────
 
   useEffect(() => {
@@ -274,10 +369,21 @@ export default function RikhuzPage() {
     const allTopicsSel = selectedTopics.length === topics.length
     const allMosdotSel = selectedMosdot.length === mosdot.length
     const allCols = [...STD_COLLECTIONS.map(s => s.key), ...extraCols]
+    const filters: string[] = []
+    if (!allTopicsSel) filters.push(`${selectedTopics.length} נושאים`)
+    if (!allMosdotSel) filters.push(`${selectedMosdot.length} מוסדות`)
+    if (fromMonth || toMonth) filters.push(`חודש חישוב ${fromMonth || '…'} עד ${toMonth || '…'}`)
+    if (fromTachula || toTachula) filters.push(`חודש תחולה ${fromTachula || '…'} עד ${toTachula || '…'}`)
+
+    // כל לחיצה מריצה שאילתה חדשה ומוחקת את התוצאות הקודמות מיד — כך ברור שהחיפוש רץ
+    // מחדש, גם כשהתוצאה זהה, ואין צורך ב"אפס" בין חיפוש לחיפוש.
     setLoading(true)
+    setSearchError('')
+    setData({}); setFilteredRows([]); setHasData(false); setLastSearch(null)
     try {
       const res = await fetch('/api/reports/query', {
         method: 'POST',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           collections:  allCols,
@@ -289,16 +395,19 @@ export default function RikhuzPage() {
           mosad_codes:  allMosdotSel ? undefined : selectedMosdot,
         }),
       })
-      const d = await res.json()
-      if (d.ok) {
-        setData(d.data ?? {})
-        setHasData(true)
-        const firstWithData = allCols.find(c => (d.data?.[c]?.length ?? 0) > 0)
-        const tab = firstWithData ?? 'CHESHBONIT'
-        setActiveTab(tab)
-        setFilteredRows((d.data?.[tab] ?? []) as Record<string, unknown>[])
-      }
-    } catch { /* ignore */ } finally {
+      const d = await res.json().catch(() => null)
+      if (!res.ok || !d?.ok) throw new Error(d?.error ?? `שגיאת שרת (${res.status})`)
+
+      setData(d.data ?? {})
+      setHasData(true)
+      const firstWithData = allCols.find(c => (d.data?.[c]?.length ?? 0) > 0)
+      const tab = firstWithData ?? 'CHESHBONIT'
+      setActiveTab(tab)
+      setFilteredRows((d.data?.[tab] ?? []) as Record<string, unknown>[])
+      setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, available: d.meta?.available, errors: d.meta?.errors })
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : 'שגיאה בביצוע החיפוש')
+    } finally {
       setLoading(false)
     }
   }, [selectedTopics, topics.length, selectedMosdot, mosdot.length, fromMonth, toMonth, fromTachula, toTachula, extraCols])
@@ -311,6 +420,8 @@ export default function RikhuzPage() {
     setExtraCols([])
     setData({}); setHasData(false)
     setActiveTab('CHESHBONIT'); setFilteredRows([])
+    setSearchError(''); setLastSearch(null)
+    setSavedId(''); setSavedMsg('')
   }
 
   // ── Tab switch ─────────────────────────────────────────────────────────────
@@ -433,6 +544,34 @@ export default function RikhuzPage() {
       {/* Filter panel */}
       <div className="bg-white border border-[#d1d9e0] rounded-xl p-5 flex flex-col gap-4">
 
+        {/* חיפושים שמורים */}
+        <div className="flex items-center gap-2 flex-wrap pb-4 border-b border-[#eaeef2]">
+          <label className="text-xs text-[#636c76] font-medium">חיפוש שמור</label>
+          <select
+            value={savedId}
+            onChange={e => applySaved(e.target.value)}
+            className="bg-[#f0f3f6] border border-[#d1d9e0] text-[#1f2328] rounded-lg px-3 py-1.5 text-sm min-w-[200px] focus:outline-none focus:border-[#0969da]"
+          >
+            <option value="">{savedSearches.length ? 'בחר חיפוש שמור…' : 'אין חיפושים שמורים'}</option>
+            {savedSearches.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+          </select>
+          <button
+            onClick={saveCurrent}
+            className="px-3 py-1.5 border border-[#d1d9e0] bg-white text-[#1f2328] text-sm rounded-lg hover:bg-[#f0f3f6] transition-colors"
+          >
+            💾 שמור את החיפוש הנוכחי
+          </button>
+          {savedId && (
+            <button
+              onClick={deleteSaved}
+              className="px-3 py-1.5 border border-[#d1d9e0] bg-white text-[#cf222e] text-sm rounded-lg hover:bg-[#fff0f0] transition-colors"
+            >
+              🗑 מחק
+            </button>
+          )}
+          {savedMsg && <span className="text-xs text-[#636c76]">{savedMsg}</span>}
+        </div>
+
         {/* Row 1: נושאים + חודשי חישוב */}
         <div className="grid grid-cols-3 gap-4 items-end">
           <MultiSelect
@@ -510,7 +649,7 @@ export default function RikhuzPage() {
             className="px-5 py-2 bg-[#1a7f37] hover:bg-[#116329] text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-60 transition-colors"
           >
             {hasData && !loading && <span className="w-2 h-2 rounded-full bg-green-300 animate-pulse" />}
-            {loading ? '⏳ טוען...' : '🔍 חפש'}
+            {loading ? '⏳ טוען...' : hasData ? '🔍 חפש שוב' : '🔍 חפש'}
           </button>
           <button
             onClick={handleReset}
@@ -521,13 +660,49 @@ export default function RikhuzPage() {
           {hasData && !loading && (
             <span className="text-xs text-[#636c76]">
               {allTabs.reduce((s, t) => s + (data[t.key]?.length ?? 0), 0).toLocaleString()} רשומות בסה&quot;כ
+              {lastSearch && ` · הושלם ${lastSearch.at.toLocaleTimeString('he-IL')}`}
             </span>
           )}
         </div>
       </div>
 
+      {searchError && (
+        <div className="p-3 bg-[#fff0f0] border border-[#ffb3b3] rounded-lg text-sm text-[#cf222e]">
+          החיפוש נכשל: {searchError}
+        </div>
+      )}
+
+      {lastSearch?.errors && (
+        <div className="p-3 bg-[#fff8c5] border border-[#9a6700] rounded-lg text-sm text-[#9a6700]">
+          השאילתה נכשלה בקולקשנים הבאים, ולכן הם מוצגים ריקים:{' '}
+          {Object.entries(lastSearch.errors).map(([k, v]) => `${k} (${v})`).join(' · ')}
+        </div>
+      )}
+
+      {loading && (
+        <div className="bg-white border border-[#d1d9e0] rounded-xl py-12 text-center text-sm text-[#636c76]">
+          ⏳ מריץ שאילתה חדשה...
+        </div>
+      )}
+
+      {hasData && !loading && lastSearch && lastSearch.total === 0 && (
+        <div className="p-4 bg-[#fff8c5] border border-[#9a6700] rounded-xl text-sm text-[#9a6700] flex flex-col gap-1.5">
+          <div className="font-medium">לא נמצאו רשומות עבור הסינון שנבחר.</div>
+          {lastSearch.filters.length > 0 && <div>הסינון שהופעל: {lastSearch.filters.join(' · ')}</div>}
+          {lastSearch.available && (
+            <div>
+              חודשי חישוב שקיימים בנתונים:{' '}
+              {Object.entries(lastSearch.available)
+                .map(([k, v]) => `${allTabs.find(t => t.key === k)?.label ?? k}: ${v ? `${v.from}–${v.to}` : 'ללא תאריך'}`)
+                .join(' · ')}
+            </div>
+          )}
+          <div>אפשר לשנות את הסינון וללחוץ &quot;חפש שוב&quot; — אין צורך ב&quot;אפס&quot;.</div>
+        </div>
+      )}
+
       {/* Results */}
-      {hasData && (
+      {hasData && !loading && (
         <div className="bg-white border border-[#d1d9e0] rounded-xl flex flex-col overflow-hidden">
 
           {/* Tab bar */}
@@ -611,7 +786,7 @@ export default function RikhuzPage() {
       )}
 
       {/* Empty state */}
-      {!hasData && !loading && (
+      {!hasData && !loading && !searchError && (
         <div className="bg-white border border-[#d1d9e0] rounded-xl flex flex-col items-center justify-center py-16 text-[#636c76]">
           <div className="text-5xl mb-3 opacity-30">📋</div>
           <div className="text-base font-medium">הגדר פילטרים ולחץ חפש</div>

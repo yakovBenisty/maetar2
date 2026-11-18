@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
 
     const db = await getDb();
     const result: Record<string, unknown[]> = {};
+    const errors: Record<string, string> = {};
 
     for (const colName of collections) {
       const query: Filter<Document> = {};
@@ -102,11 +103,38 @@ export async function POST(req: NextRequest) {
         });
       } catch (colErr) {
         result[colName] = [];
+        errors[colName] = colErr instanceof Error ? colErr.message : 'שגיאה';
         console.error(`Error querying collection ${colName}:`, colErr);
       }
     }
 
-    return NextResponse.json({ ok: true, data: result });
+    const total = Object.values(result).reduce((sum, rows) => sum + rows.length, 0);
+
+    // כשלא חזרו רשומות — מחזירים גם את טווח חודשי החישוב הקיימים בכל קולקשן, כדי שהמסך
+    // יוכל להסביר אם הסינון פשוט חורג מהנתונים (למשל חודש שמית"ר טרם פרסם).
+    let available: Record<string, { from: string; to: string } | null> | undefined;
+    if (total === 0) {
+      const fmt = (d: unknown) =>
+        d instanceof Date ? `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}` : '';
+      available = {};
+      for (const colName of collections) {
+        try {
+          const col = db.collection(colName);
+          const dated = { חודש_חישוב: { $type: 'date' } } as Filter<Document>;
+          const first = await col.find(dated).sort({ חודש_חישוב: 1 }).limit(1).project({ _id: 0, חודש_חישוב: 1 }).next();
+          const last = await col.find(dated).sort({ חודש_חישוב: -1 }).limit(1).project({ _id: 0, חודש_חישוב: 1 }).next();
+          available[colName] = first && last ? { from: fmt(first.חודש_חישוב), to: fmt(last.חודש_חישוב) } : null;
+        } catch {
+          available[colName] = null;
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      data: result,
+      meta: { total, errors: Object.keys(errors).length ? errors : undefined, available },
+    });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : 'שגיאה' },
