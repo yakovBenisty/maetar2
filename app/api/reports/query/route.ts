@@ -70,14 +70,11 @@ export async function POST(req: NextRequest) {
       }
 
       if (mosad_codes && mosad_codes.length > 0) {
-        // Support both string and numeric סמל_מוסד; collections without a
-        // סמל_מוסד field (e.g. CHESHBONIT) are returned unfiltered by institution.
+        // סמל_מוסד נשמר כמספר או כמחרוזת. שורות שאינן משויכות למוסד — שדה חסר (חשבוניות) או
+        // 0 (רוב הידניים) — מוצגות תמיד, כי אי אפשר לשייך אותן למוסד מסוים; שאר הקבצים מסוננים.
         const numericMosad = mosad_codes.map(Number).filter((n) => !isNaN(n));
         const allMosad = [...new Set([...mosad_codes, ...numericMosad])];
-        query['$or'] = [
-          { סמל_מוסד: { $in: allMosad } },
-          { סמל_מוסד: { $exists: false } },
-        ] as unknown as Filter<Document>['$or'];
+        query['סמל_מוסד'] = { $in: [...allMosad, 0, '0', null] } as unknown as string;
       }
 
       // For MUCARIM and SHARATIM: skip rows where הפרש_מחושב === 0

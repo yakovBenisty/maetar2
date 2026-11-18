@@ -9,6 +9,8 @@
 //   MITAR_INGEST_TOKEN  אותו טוקן שמוגדר בשרת
 //
 // הרצה ידנית:   npx tsx scripts/mitar-relay.ts
+// השלמת היסטוריה לטווח חודשים (מהישן לחדש, קבצים שכבר קיימים מדולגים):
+//               npx tsx scripts/mitar-relay.ts --from 9/2019 --to 12/2023
 // הרצה מתוזמנת: scripts/mitar-relay.cmd (כותב ל-logs/mitar-sync.log). רישום חד-פעמי
 // ב-Windows Task Scheduler, כולל השלמת ריצה שהוחמצה כשהמחשב היה כבוי (PowerShell):
 //   Register-ScheduledTask -TaskName "maetar2-mitar-sync" `
@@ -39,6 +41,22 @@ interface IngestSummaryItem {
   error?: string;
 }
 
+/** --from M/YYYY --to M/YYYY → טווח כ-year*12+month; ללא הארגומנטים — הריצה הרגילה (החודשים האחרונים). */
+function parseRange(args: string[]): { from: number; to: number } | null {
+  const get = (flag: string) => {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const parse = (v: string | undefined) => {
+    const m = /^(\d{1,2})\/(\d{4})$/.exec(v ?? '');
+    return m ? Number(m[2]) * 12 + Number(m[1]) : null;
+  };
+  const from = parse(get('--from'));
+  const to = parse(get('--to'));
+  if (from === null && to === null) return null;
+  return { from: from ?? 0, to: to ?? Number.MAX_SAFE_INTEGER };
+}
+
 async function main() {
   if (!INGEST_URL || !INGEST_TOKEN) {
     console.error('חובה להגדיר MITAR_INGEST_URL ו-MITAR_INGEST_TOKEN (ב-.env.local או בסביבה)');
@@ -48,8 +66,15 @@ async function main() {
   console.log(`[${new Date().toISOString()}] פותח session מול מית"ר (מוטב ${BENEFICIARY_CODE})...`);
   const cookie = await openMitarSession(BENEFICIARY_CODE);
   const available = await listAvailableMonths(cookie);
-  const toCheck = available.slice(0, MONTHS_PER_RUN);
-  console.log(`נמצאו ${available.length} חודשים זמינים, בודק ${toCheck.length} החדשים ביותר.`);
+  const range = parseRange(process.argv.slice(2));
+  const toCheck = range
+    ? available.filter((m) => m.year * 12 + m.month >= range.from && m.year * 12 + m.month <= range.to).reverse()
+    : available.slice(0, MONTHS_PER_RUN);
+  console.log(
+    range
+      ? `נמצאו ${available.length} חודשים זמינים, משלים ${toCheck.length} חודשים בטווח המבוקש.`
+      : `נמצאו ${available.length} חודשים זמינים, בודק ${toCheck.length} החדשים ביותר.`
+  );
 
   let hadError = false;
 

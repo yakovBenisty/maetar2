@@ -46,6 +46,7 @@ interface SearchInfo {
   at: Date
   total: number
   filters: string[]
+  mosadFiltered: boolean
   available?: Record<string, { from: string; to: string } | null>
   errors?: Record<string, string>
 }
@@ -404,7 +405,7 @@ export default function RikhuzPage() {
       const tab = firstWithData ?? 'CHESHBONIT'
       setActiveTab(tab)
       setFilteredRows((d.data?.[tab] ?? []) as Record<string, unknown>[])
-      setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, available: d.meta?.available, errors: d.meta?.errors })
+      setLastSearch({ at: new Date(), total: d.meta?.total ?? 0, filters, mosadFiltered: !allMosdotSel, available: d.meta?.available, errors: d.meta?.errors })
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : 'שגיאה בביצוע החיפוש')
     } finally {
@@ -698,6 +699,12 @@ export default function RikhuzPage() {
             </div>
           )}
           <div>אפשר לשנות את הסינון וללחוץ &quot;חפש שוב&quot; — אין צורך ב&quot;אפס&quot;.</div>
+        </div>
+      )}
+
+      {hasData && !loading && lastSearch?.mosadFiltered && lastSearch.total > 0 && (
+        <div className="px-4 py-2 bg-[#ddf4ff] border border-[#54aeff] rounded-lg text-xs text-[#0550ae]">
+          הסינון לפי מוסד חל על הקבצים שמפרטים מוסד (מוצרים, שירותים וכו׳). חשבוניות וידניים ללא מוסד מוצגים במלואם — החשבוניות מרכזות את כל המוסדות יחד.
         </div>
       )}
 
