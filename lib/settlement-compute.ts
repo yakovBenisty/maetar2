@@ -3,6 +3,7 @@ import { getDb } from './mongo';
 import { getActiveParams } from './project-params';
 import { calculateSettlement, type SettlementBreakdown } from './settlement';
 import { getIncomeBreakdown } from './income-matching';
+import { resolveTopicFiles, getDetailTotals, getInvoiceTotalsByTopic } from './income-detail';
 import type { ExpenseKind } from '@/app/api/expenses/mappings/route';
 
 export interface ProjectStatus {
@@ -13,8 +14,18 @@ export interface ProjectStatus {
     model: string;
     status: string;
     noseme_codes: string[];
+    mosad_codes: string[];
   };
   breakdown: SettlementBreakdown;
+  incomeInfo: IncomeInfo;
+}
+
+export interface IncomeInfo {
+  /** all = חשבוניות + מקדמות ידניות (כל המוסדות); institutions = מהקבצים המפורטים, למוסדות שנבחרו */
+  mode: 'all' | 'institutions';
+  mosadCount: number;
+  /** נושאים שאין להם נתון לפי מוסד — ההכנסה שלהם לא נכללת; מוצג רק סכום כללי מהחשבוניות */
+  unavailableTopics: { code: string; file: string | null; generalInvoiceTotal: number }[];
 }
 
 async function sumExpenseKind(
@@ -43,6 +54,8 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
   if (!project) throw new Error('פרויקט לא נמצא');
 
   const nosemeCodes = (project.noseme_codes ?? []) as string[];
+  const mosadCodes = ((project.mosad_codes ?? []) as string[]).map(String);
+  const byInstitution = mosadCodes.length > 0;
   // ייבוא ה-CSV (lib/import-engine.ts) הופך ערכים מספריים כמו "631" למספר Mongo אמיתי —
   // קוד_נושא עשוי להיות שמור כמחרוזת או כמספר, לכן תואמים לשתי הצורות.
   const nosemeCodeVariants = nosemeCodes.flatMap((c) => {
@@ -52,7 +65,7 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
 
   const [incomeByCode, nosemeDocs, advances, operatorExpensesTotal, operatorExecutionOpeningTotal, rashutExpensesTotal, reservationsTotal, parentPaymentsTotal, allRuns, params] =
     await Promise.all([
-      nosemeCodes.length
+      nosemeCodes.length && !byInstitution
         ? db
             .collection('CHESHBONIT')
             .aggregate([
@@ -69,7 +82,9 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
       db.collection('NOSEME').find({ code: { $in: nosemeCodes } }, { projection: { code: 1, direction: 1 } }).toArray(),
       // מקדמות ידניות ב-YADANIIM לא מופיעות כשורה חיובית ב-CHESHBONIT, ולכן מתווספות
       // להכנסה בנפרד — בדיוק כמו בגיליונות ההתחשבנות (ראו lib/income-matching.ts).
-      getIncomeBreakdown(nosemeCodes, project.date_from, project.date_to),
+      byInstitution
+        ? Promise.resolve({ cheshbonitRows: [], yadaniimRows: [], unmatchedAdvanceTotal: 0, manualAdvanceTotal: 0 })
+        : getIncomeBreakdown(nosemeCodes, project.date_from, project.date_to),
       sumExpenseKind(db, projectId, 'operator_expense', false),
       sumExpenseKind(db, projectId, 'operator_expense', true),
       project.model === 'joint' ? sumExpenseKind(db, projectId, 'rashut_expense') : Promise.resolve(0),
@@ -90,6 +105,22 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
   for (const row of incomeByCode) {
     if (debitCodes.has(String(row._id))) ministryDeductionsTotal -= row.total;
     else creditIncome += row.total;
+  }
+
+  // נבחרו מוסדות: החשבוניות מרכזות את כל המוסדות, ולכן ההכנסה נלקחת מהקובץ המפורט של כל
+  // נושא (לפי מיפוי הנושאים), מסוננת למוסדות. נושא ללא פירוט לפי מוסד — "אין נתון": לא נכלל.
+  const incomeInfo: IncomeInfo = { mode: byInstitution ? 'institutions' : 'all', mosadCount: mosadCodes.length, unavailableTopics: [] };
+  if (byInstitution && nosemeCodes.length) {
+    const topicFiles = await resolveTopicFiles(db, nosemeCodes);
+    const totals = await getDetailTotals(db, topicFiles, project.date_from, project.date_to, mosadCodes);
+    const unavailable = totals.filter((t) => t.total === null);
+    const invoiceTotals = unavailable.length ? await getInvoiceTotalsByTopic(db, unavailable.map((t) => t.code), project.date_from, project.date_to) : new Map<string, number>();
+    for (const t of totals) {
+      if (t.total === null) continue;
+      if (debitCodes.has(t.code)) ministryDeductionsTotal -= t.total;
+      else creditIncome += t.total;
+    }
+    incomeInfo.unavailableTopics = unavailable.map((t) => ({ code: t.code, file: t.file, generalInvoiceTotal: invoiceTotals.get(t.code) ?? 0 }));
   }
 
   // paid_total בדוחות legacy_import הוא "שולם מצטבר עד לאותו תאריך" כפי שדווח בגיליון
@@ -128,7 +159,9 @@ export async function computeProjectStatus(projectId: string): Promise<ProjectSt
       model: project.model,
       status: project.status,
       noseme_codes: nosemeCodes,
+      mosad_codes: mosadCodes,
     },
     breakdown,
+    incomeInfo,
   };
 }

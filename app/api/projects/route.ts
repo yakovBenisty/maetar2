@@ -13,6 +13,8 @@ export interface ProjectDoc {
   operator_emails: string[];
   tabar_section: string;
   noseme_codes: string[];
+  /** מוסדות שההכנסה נלקחת עבורם; ריק = כל המוסדות (חשבוניות + ידניים) */
+  mosad_codes: string[];
   date_from: Date;
   date_to: Date;
   status: 'open' | 'locked';
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
   if (!canManageSettlement(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json() as Partial<ProjectDoc> & { _id?: string };
-  const { _id, name, budget_year, model, operator_name, operator_emails, tabar_section, noseme_codes, date_from, date_to } = body;
+  const { _id, name, budget_year, model, operator_name, operator_emails, tabar_section, noseme_codes, mosad_codes, date_from, date_to } = body;
 
   if (!name || !budget_year || !model || !date_from || !date_to) {
     return NextResponse.json({ ok: false, error: 'שדות חובה חסרים' }, { status: 400 });
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
 
   const db = await getDb();
-  const doc = {
+  const doc: Record<string, unknown> = {
     name,
     budget_year,
     model,
@@ -64,6 +66,10 @@ export async function POST(req: NextRequest) {
     date_to: new Date(date_to),
     updated_at: new Date(),
   };
+  // לקוחות שלא שולחים mosad_codes (עריכה ישנה) לא ידרסו את הבחירה הקיימת.
+  if (mosad_codes !== undefined) {
+    doc.mosad_codes = Array.isArray(mosad_codes) ? [...new Set(mosad_codes.map(String).filter(Boolean))] : [];
+  }
 
   if (_id) {
     // נעילה (PRD 5.8) חוסמת רק טעינת הוצאות/קיזוזים, דוחות התחשבנות ופרמטרים —
@@ -73,6 +79,7 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await db.collection('PROJECTS').insertOne({
+    mosad_codes: [],
     ...doc,
     status: 'open',
     created_at: new Date(),

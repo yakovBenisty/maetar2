@@ -29,6 +29,7 @@ interface ProjectRecord {
   operator_emails: string[];
   tabar_section: string;
   noseme_codes: string[];
+  mosad_codes: string[];
   date_from: string;
   date_to: string;
   status: 'open' | 'locked';
@@ -44,6 +45,7 @@ const EMPTY_FORM: FormState = {
   operator_emails: [],
   tabar_section: '',
   noseme_codes: [],
+  mosad_codes: [],
   date_from: '',
   date_to: '',
 };
@@ -69,6 +71,7 @@ export default function ProjectsPage() {
   const [saving, setSaving] = useState(false);
 
   const [nosemeOptions, setNosemeOptions] = useState<{ value: string; label: string }[]>([]);
+  const [mosadOptions, setMosadOptions] = useState<{ value: string; label: string }[]>([]);
   const [operators, setOperators] = useState<OperatorRecord[]>([]);
   const [selectedOperatorId, setSelectedOperatorId] = useState('');
   const [addingOperator, setAddingOperator] = useState(false);
@@ -99,6 +102,12 @@ export default function ProjectsPage() {
     }
   }, []);
 
+  const loadMosdot = useCallback(async () => {
+    const res = await fetch('/api/mosdot');
+    const data = await res.json();
+    setMosadOptions((data.mosdot ?? []).map((m: { code: string | number; name?: string }) => ({ value: String(m.code), label: m.name ? `${m.code} — ${m.name}` : String(m.code) })));
+  }, []);
+
   const loadNoseme = useCallback(async () => {
     const res = await fetch('/api/noseme');
     const data = await res.json();
@@ -113,8 +122,8 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     if (hasAccess) load();
-    if (canManage) { loadNoseme(); loadOperators(); }
-  }, [hasAccess, canManage, load, loadNoseme, loadOperators]);
+    if (canManage) { loadNoseme(); loadMosdot(); loadOperators(); }
+  }, [hasAccess, canManage, load, loadNoseme, loadMosdot, loadOperators]);
 
   function openAdd() {
     setForm(EMPTY_FORM);
@@ -137,6 +146,7 @@ export default function ProjectsPage() {
       operator_emails: p.operator_emails,
       tabar_section: p.tabar_section,
       noseme_codes: p.noseme_codes,
+      mosad_codes: p.mosad_codes ?? [],
       date_from: toDateInput(p.date_from),
       date_to: toDateInput(p.date_to),
     });
@@ -316,6 +326,20 @@ export default function ProjectsPage() {
                 onChange={(codes) => setForm({ ...form, noseme_codes: codes })}
                 placeholder="חפש נושא לפי קוד או שם..."
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#636c76] mb-1">מוסדות</label>
+              <MultiSelectSearch
+                options={mosadOptions}
+                selected={form.mosad_codes}
+                onChange={(codes) => setForm({ ...form, mosad_codes: codes })}
+                placeholder="כל המוסדות — חפש מוסד כדי להגביל..."
+              />
+              <p className="text-xs text-[#8c959f] mt-1">
+                {form.mosad_codes.length === 0
+                  ? 'ברירת מחדל: כל המוסדות — ההכנסה מהחשבוניות והידניים.'
+                  : `${form.mosad_codes.length} מוסדות — ההכנסה מהקבצים המפורטים לפי מוסד; נושא שאין לו פירוט לפי מוסד יוצג "אין נתון".`}
+              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-[#636c76] mb-1">מתאריך (תחולה) *</label>

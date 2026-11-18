@@ -24,6 +24,7 @@ interface ProjectRecord {
   operator_emails: string[];
   tabar_section: string;
   noseme_codes: string[];
+  mosad_codes: string[];
   date_from: string;
   date_to: string;
   status: 'open' | 'locked';
@@ -54,6 +55,33 @@ interface Breakdown {
   // שדות של דוח שיובא מההיסטוריה (source='legacy_import') — מבנה הגיליון המקורי
   executionAndOverheadTotal?: number | null;
   advanceTotal?: number | null;
+}
+
+interface IncomeInfo {
+  mode: 'all' | 'institutions';
+  mosadCount: number;
+  unavailableTopics: { code: string; file: string | null; generalInvoiceTotal: number }[];
+}
+
+interface ReconRow {
+  code: string;
+  name: string;
+  direction: string;
+  file: string | null;
+  fileSource: 'mapping' | 'auto' | 'none';
+  invoices: number;
+  manualAdvance: number;
+  invoicesTotal: number;
+  detail: number | null;
+  diff: number | null;
+}
+
+interface IncomeExtra {
+  mode: 'all' | 'institutions';
+  mosadCodes: string[];
+  reconciliation: { rows: ReconRow[]; invoicesTotal: number; detailTotal: number; diffTotal: number; incomplete: boolean } | null;
+  institutionRows: { code: string; mosadCode: string; mosadName: string; total: number; rows: number }[];
+  unavailableTopics: { code: string; name: string; file: string | null; generalInvoiceTotal: number }[];
 }
 
 interface CheshbonitAdvanceRow {
@@ -153,6 +181,10 @@ export default function ProjectDetailPage() {
   const [cheshbonitRows, setCheshbonitRows] = useState<CheshbonitAdvanceRow[]>([]);
   const [yadaniimRows, setYadaniimRows] = useState<YadaniimAdvanceRow[]>([]);
   const [manualAdvanceTotal, setManualAdvanceTotal] = useState(0);
+  const [incomeExtra, setIncomeExtra] = useState<IncomeExtra | null>(null);
+  const [incomeInfo, setIncomeInfo] = useState<IncomeInfo | null>(null);
+  const [mosadOptions, setMosadOptions] = useState<{ value: string; label: string }[]>([]);
+  const [editMosadCodes, setEditMosadCodes] = useState<string[]>([]);
   const [loadingIncome, setLoadingIncome] = useState(false);
   const [params, setParams] = useState<ParamRecord[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
@@ -199,7 +231,7 @@ export default function ProjectDetailPage() {
   const loadBreakdown = useCallback(async () => {
     const res = await fetch(`/api/settlement/preview?project_id=${id}`);
     const data = await res.json();
-    if (res.ok) setBreakdown(data.breakdown);
+    if (res.ok) { setBreakdown(data.breakdown); setIncomeInfo(data.incomeInfo ?? null); }
   }, [id]);
 
   const loadIncome = useCallback(async () => {
@@ -211,6 +243,13 @@ export default function ProjectDetailPage() {
         setCheshbonitRows(data.cheshbonitRows ?? []);
         setYadaniimRows(data.yadaniimRows ?? []);
         setManualAdvanceTotal(data.manualAdvanceTotal ?? 0);
+        setIncomeExtra({
+          mode: data.mode ?? 'all',
+          mosadCodes: data.mosadCodes ?? [],
+          reconciliation: data.reconciliation ?? null,
+          institutionRows: data.institutionRows ?? [],
+          unavailableTopics: data.unavailableTopics ?? [],
+        });
       }
     } finally {
       setLoadingIncome(false);
@@ -229,6 +268,12 @@ export default function ProjectDetailPage() {
     setRuns(data.runs ?? []);
   }, [id]);
 
+  const loadMosdot = useCallback(async () => {
+    const res = await fetch('/api/mosdot');
+    const data = await res.json();
+    setMosadOptions((data.mosdot ?? []).map((m: { code: string | number; name?: string }) => ({ value: String(m.code), label: m.name ? `${m.code} — ${m.name}` : String(m.code) })));
+  }, []);
+
   const loadNoseme = useCallback(async () => {
     const res = await fetch('/api/noseme');
     const data = await res.json();
@@ -243,14 +288,16 @@ export default function ProjectDetailPage() {
       loadParams();
       loadRuns();
       loadNoseme();
+      loadMosdot();
     }
-  }, [hasAccess, id, loadProject, loadBreakdown, loadIncome, loadParams, loadRuns, loadNoseme]);
+  }, [hasAccess, id, loadProject, loadBreakdown, loadIncome, loadParams, loadRuns, loadNoseme, loadMosdot]);
 
   function openEditScope() {
     if (!project) return;
     setEditNosemeCodes(project.noseme_codes ?? []);
     setEditDateFrom((project.date_from ?? '').slice(0, 10));
     setEditDateTo((project.date_to ?? '').slice(0, 10));
+    setEditMosadCodes(project.mosad_codes ?? []);
     setEditingScope(true);
   }
 
@@ -271,6 +318,7 @@ export default function ProjectDetailPage() {
           operator_emails: project.operator_emails,
           tabar_section: project.tabar_section,
           noseme_codes: editNosemeCodes,
+          mosad_codes: editMosadCodes,
           date_from: editDateFrom,
           date_to: editDateTo,
         }),
@@ -280,6 +328,7 @@ export default function ProjectDetailPage() {
       setEditingScope(false);
       loadProject();
       loadBreakdown();
+      loadIncome();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'שגיאה');
     } finally {
@@ -462,6 +511,15 @@ export default function ProjectDetailPage() {
               <label className="block text-xs font-medium text-[#636c76] mb-1">קודי נושא (CHESHBONIT)</label>
               <MultiSelectSearch options={nosemeOptions} selected={editNosemeCodes} onChange={setEditNosemeCodes} placeholder="חפש קוד נושא..." />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-[#636c76] mb-1">מוסדות</label>
+              <MultiSelectSearch options={mosadOptions} selected={editMosadCodes} onChange={setEditMosadCodes} placeholder="כל המוסדות — חפש מוסד כדי להגביל..." />
+              <p className="text-xs text-[#8c959f] mt-1">
+                {editMosadCodes.length === 0
+                  ? 'ברירת מחדל: כל המוסדות — ההכנסה מהחשבוניות והידניים.'
+                  : `${editMosadCodes.length} מוסדות — ההכנסה מהקבצים המפורטים לפי מוסד; נושא שאין לו פירוט לפי מוסד יוצג "אין נתון".`}
+              </p>
+            </div>
             <div className="flex gap-3">
               <div>
                 <label className="block text-xs text-[#636c76] mb-1">תחולה מתאריך</label>
@@ -497,6 +555,9 @@ export default function ProjectDetailPage() {
               ) : (
                 <span className="text-[#9a6700]">לא הוגדרה</span>
               )}
+              <span className="text-[#636c76] mx-2">·</span>
+              <span className="text-[#636c76]">מוסדות: </span>
+              <span className="text-[#1f2328]">{(project.mosad_codes ?? []).length ? `${project.mosad_codes.length} מוסדות נבחרו` : 'כל המוסדות'}</span>
             </div>
             {canManage && (
               <button onClick={openEditScope} className="text-xs text-[#0969da] hover:underline whitespace-nowrap">ערוך</button>
@@ -578,6 +639,16 @@ export default function ProjectDetailPage() {
                 <Row label={'סה"כ שולם עד היום'} value={-breakdown.previouslyPaidTotal} />
                 <Row label={'= סה"כ יתרה לתשלום למפעיל'} value={breakdown.calculatedTotal} strong highlight />
               </div>
+              {incomeInfo?.mode === 'institutions' && (
+                <div className="p-3 bg-[#ddf4ff] border border-[#54aeff] rounded-lg text-sm text-[#0550ae] space-y-1">
+                  <div>ההכנסה מחושבת עבור {incomeInfo.mosadCount} מוסדות שנבחרו, מהקבצים המפורטים (לא מהחשבוניות, שמרכזות את כל המוסדות).</div>
+                  {incomeInfo.unavailableTopics.map((t) => (
+                    <div key={t.code}>
+                      נושא {t.code}{t.file ? ` (קובץ ${t.file})` : ''}: <b>אין נתון פר מוסד</b> — רק סכום כללי בחשבוניות: {money(t.generalInvoiceTotal)} ₪ (לא נכלל בחישוב).
+                    </div>
+                  ))}
+                </div>
+              )}
               {(project.noseme_codes ?? []).length === 0 && (
                 <div className="p-3 bg-[#fff8c5] border border-[#9a6700] rounded-lg text-sm text-[#9a6700]">
                   ⚠️ לא הוגדרו קודי נושא לפרויקט — לא ניתן למשוך הכנסה מקובצי המית&quot;ר.
@@ -595,6 +666,102 @@ export default function ProjectDetailPage() {
             שורות &quot;מקדמה ידנית&quot; מ&quot;ידניים&quot; (YADANIIM). נושאי חובה (הזנה) מוצגים כהוצאת רשות ולא כהפחתת הכנסה.
             הטבלאות כאן מציגות את שורות המקדמה בלבד, לביקורת.
           </p>
+
+          {!loadingIncome && incomeExtra?.mode === 'institutions' && (
+            <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+              <div className="px-6 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa]">
+                <h3 className="text-sm font-semibold text-[#1f2328]">הכנסה לפי מוסד — {incomeExtra.mosadCodes.length} מוסדות שנבחרו (מהקבצים המפורטים)</h3>
+                <p className="text-xs text-[#636c76] mt-0.5">הסכום הוא סך ההפרש המחושב בטווח התחולה של הפרויקט, כפי שהוא מופיע בקובץ שבו הנושא מדווח.</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[#f6f8fa] border-b border-[#d1d9e0] text-right">
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">נושא</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מוסד</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">שם מוסד</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סכום</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">שורות</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incomeExtra.institutionRows.length === 0 ? (
+                    <tr><td colSpan={5} className="px-4 py-4 text-center text-xs text-[#636c76]">אין שורות למוסדות שנבחרו בטווח התחולה</td></tr>
+                  ) : incomeExtra.institutionRows.map((r) => (
+                    <tr key={`${r.code}-${r.mosadCode}`} className="border-b border-[#f0f3f6]">
+                      <td className="px-4 py-2 text-[#1f2328]">{r.code}</td>
+                      <td className="px-4 py-2 text-[#636c76]">{r.mosadCode}</td>
+                      <td className="px-4 py-2 text-[#636c76]">{r.mosadName}</td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.total)}</td>
+                      <td className="px-4 py-2 text-[#636c76]">{r.rows}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {incomeExtra.unavailableTopics.length > 0 && (
+                <div className="px-6 py-3 border-t border-[#d1d9e0] bg-[#fff8c5] text-xs text-[#9a6700] space-y-0.5">
+                  {incomeExtra.unavailableTopics.map((t) => (
+                    <div key={t.code}>
+                      נושא {t.code}{t.name ? ` — ${t.name}` : ''}{t.file ? ` (מדווח בקובץ ${t.file})` : ''}: <b>אין נתון פר מוסד</b>, רק סכום כללי בחשבוניות: {money(t.generalInvoiceTotal)} ₪
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!loadingIncome && incomeExtra?.reconciliation && (
+            <div className="bg-white border border-[#d1d9e0] rounded-xl overflow-hidden">
+              <div className="px-6 py-3 border-b border-[#d1d9e0] bg-[#f6f8fa]">
+                <h3 className="text-sm font-semibold text-[#1f2328]">בקרת פער — חשבוניות מול הקבצים המפורטים (כל המוסדות)</h3>
+                <p className="text-xs text-[#636c76] mt-0.5">
+                  להבנה בלבד, לא משפיע על החישוב: האם כל הכסף שהתקבל בחשבוניות (וביד) מופיע בקבצים המפורטים. הפרש שלילי = בקבצים המפורטים מופיע יותר.
+                </p>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[#f6f8fa] border-b border-[#d1d9e0] text-right">
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">נושא</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">קובץ מפורט</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">חשבוניות</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">מקדמה ידנית</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">סה&quot;כ חשבוניות + ידניים</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">בקבצים המפורטים</th>
+                    <th className="px-4 py-2 text-xs font-medium text-[#636c76]">הפרש</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incomeExtra.reconciliation.rows.map((r) => (
+                    <tr key={r.code} className="border-b border-[#f0f3f6]">
+                      <td className="px-4 py-2 text-[#1f2328]">{r.code}{r.name ? ` — ${r.name}` : ''}</td>
+                      <td className="px-4 py-2 text-[#636c76] text-xs">
+                        {r.file ?? 'אין'}{r.file ? (r.fileSource === 'auto' ? ' (זוהה לפי הנתונים)' : ' (לפי מיפוי נושאים)') : ''}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.invoices)}</td>
+                      <td className="px-4 py-2 font-mono text-[#636c76]">{money(r.manualAdvance)}</td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{money(r.invoicesTotal)}</td>
+                      <td className="px-4 py-2 font-mono text-[#1f2328]">{r.detail === null ? 'אין נתון' : money(r.detail)}</td>
+                      <td className={`px-4 py-2 font-mono ${r.diff !== null && Math.abs(r.diff) > 1 ? 'text-[#cf222e] font-bold' : 'text-[#636c76]'}`}>
+                        {r.diff === null ? '—' : money(r.diff)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-[#f6f8fa] font-bold">
+                    <td className="px-4 py-2 text-[#1f2328]" colSpan={4}>סה&quot;כ (נושאים שיש להם קובץ מפורט)</td>
+                    <td className="px-4 py-2 font-mono">{money(incomeExtra.reconciliation.invoicesTotal)}</td>
+                    <td className="px-4 py-2 font-mono">{money(incomeExtra.reconciliation.detailTotal)}</td>
+                    <td className={`px-4 py-2 font-mono ${Math.abs(incomeExtra.reconciliation.diffTotal) > 1 ? 'text-[#cf222e]' : 'text-[#1a7f37]'}`}>
+                      {money(incomeExtra.reconciliation.diffTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {incomeExtra.reconciliation.incomplete && (
+                <div className="px-6 py-2 border-t border-[#d1d9e0] text-xs text-[#9a6700] bg-[#fff8c5]">
+                  לנושאים המסומנים &quot;אין נתון&quot; אין קובץ מפורט עם סכום, ולכן הם לא נכללים בהשוואה.
+                </div>
+              )}
+            </div>
+          )}
 
           {loadingIncome ? (
             <div className="p-8 text-center text-sm text-[#636c76]">טוען...</div>
